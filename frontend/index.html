@@ -3,40 +3,82 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Дашборд пользователей CRM</title>
+    <title>Дашборд «Цифровой наставник»</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <div class="dashboard">
-        <h1>Дашборд пользователей CRM</h1>
+    <div id="login-view" class="login-page" hidden>
+        <form id="login-form" class="login-card" novalidate>
+            <h1>Дашборд «Цифровой наставник»</h1>
+            <p class="muted">Вход для авторизованных пользователей</p>
+            <label class="field">
+                <span>Логин</span>
+                <input id="login-username" type="text" autocomplete="username" required>
+            </label>
+            <label class="field">
+                <span>Пароль</span>
+                <input id="login-password" type="password" autocomplete="current-password" required>
+            </label>
+            <p id="login-error" class="error" role="alert" hidden></p>
+            <button type="submit" id="login-submit" class="primary">Войти</button>
+        </form>
+    </div>
 
-        <div class="widget">
-            <h2>Текущее количество пользователей</h2>
+    <div id="dashboard-view" class="dashboard" hidden>
+        <header class="topbar">
             <div>
-                <p>Пенсионеры: <span id="pensioners-count">Загрузка...</span></p>
-                <p>Волонтеры: <span id="volunteers-count">Загрузка...</span></p>
+                <h1>Дашборд проекта «Цифровой наставник»</h1>
+                <p class="welcome">Добро пожаловать, <span id="current-user">—</span>!</p>
             </div>
-            <button id="refresh-btn">Обновить</button>
-        </div>
+            <button id="logout-btn" class="secondary">Выйти</button>
+        </header>
 
-        <div class="widget">
-            <h2>Динамика изменения количества пользователей</h2>
-            <div class="period-selector">
-                <button data-period="7d">7 дней</button>
-                <button data-period="30d">30 дней</button>
-                <button data-period="90d">90 дней</button>
-                <button data-period="all">За все время</button>
+        <section class="card hero">
+            <h2>Количество пенсионеров, получивших помощь</h2>
+            <div id="pensioners-count" class="metric">—</div>
+            <p class="muted">Уникальные участники проекта — пользователи CRM с тегами «ФПГ_ЦН»</p>
+            <button id="refresh-btn" class="primary">Обновить</button>
+        </section>
+
+        <section class="card">
+            <div class="card-head">
+                <h2>Динамика роста</h2>
+                <button id="export-btn" class="secondary small">Экспорт CSV</button>
             </div>
-            <canvas id="history-chart"></canvas>
-        </div>
 
-        <div class="data-status">
+            <div class="controls">
+                <div class="period-selector" role="group" aria-label="Период">
+                    <button data-period="7d">7 дней</button>
+                    <button data-period="30d" class="active">30 дней</button>
+                    <button data-period="90d">90 дней</button>
+                    <button data-period="all">За всё время</button>
+                </div>
+                <div class="custom-range">
+                    <label>с <input type="date" id="range-start"></label>
+                    <label>по <input type="date" id="range-end"></label>
+                    <button id="apply-range" class="secondary">Применить</button>
+                </div>
+            </div>
+
+            <p id="chart-note" class="note" hidden></p>
+            <p id="chart-error" class="error" hidden></p>
+            <div class="chart-wrap">
+                <canvas id="history-chart"></canvas>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>Источник данных</h2>
             <p>Данные загружены из CRM «МойКласс»</p>
             <p>Последнее обновление: <span id="last-updated">—</span></p>
-            <p>Статус: <span id="connection-status">Проверка...</span></p>
-        </div>
+            <p class="status-line">
+                <span id="status-dot" class="dot dot-unknown"></span>
+                <span id="connection-status">Проверка...</span>
+            </p>
+            <p class="muted">Всего пользователей в CRM: <span id="total-users">—</span> · Волонтёров: <span id="volunteers-count">—</span></p>
+        </section>
     </div>
 
     <script src="js/api_client.js"></script>
