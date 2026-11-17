@@ -1,5 +1,6 @@
 import logging
 import math
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -85,21 +86,54 @@ def _total_items(data):
     return None
 
 
+def invalidate_token():
+    with _token_lock:
+        _token_cache["value"] = None
+        _token_cache["expires_at"] = 0.0
+
+
+def _retry_delay(response, attempt):
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after:
+        try:
+            return min(30.0, float(retry_after))
+        except ValueError:
+            pass
+    return min(8.0, 0.5 * (2 ** attempt)) + random.uniform(0, 0.3)
+
+
 def _request_page(api_url, token, offset):
     params = {'limit': PAGE_LIMIT, 'offset': offset}
     headers = {"x-access-token": token, "Content-Type": "application/json"}
+    attempts = 3
 
-    last_error = None
-    for attempt in range(2):
+    for attempt in range(attempts):
         try:
             response = requests.get(api_url, headers=headers, params=params, timeout=30)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            last_error = e
-            if attempt == 0:
-                time.sleep(0.5)
-    raise Exception(str(last_error))
+        except requests.exceptions.RequestException as exc:
+            if attempt == attempts - 1:
+                raise Exception(str(exc))
+            time.sleep(_retry_delay(None, attempt))
+            continue
+
+        if response.status_code == 401:
+            invalidate_token()
+            token = get_token_api()
+            headers["x-access-token"] = token
+            if attempt == attempts - 1:
+                response.raise_for_status()
+            continue
+
+        if response.status_code == 429 or response.status_code >= 500:
+            if attempt == attempts - 1:
+                response.raise_for_status()
+            time.sleep(_retry_delay(response, attempt))
+            continue
+
+        response.raise_for_status()
+        return response.json()
+
+    raise Exception("Не удалось получить страницу данных из CRM")
 
 
 def _dedupe(pages):

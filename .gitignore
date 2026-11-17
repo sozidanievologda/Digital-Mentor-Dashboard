@@ -11,6 +11,12 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+# Local database
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+
 # Editors and OS
 .DS_Store
 .idea/

@@ -1,14 +1,30 @@
+from typing import Optional
+
 from fastapi import APIRouter
-from ..services.data_processing import get_current_metrics, get_history_data
+
+from ..services.data_processing import (
+    get_current_metrics,
+    get_history_data,
+    refresh_and_get_metrics,
+)
 
 router = APIRouter()
 
+
 @router.get("/metrics")
-async def get_metrics():
-    metrics = get_current_metrics()
-    return metrics
+def get_metrics():
+    return get_current_metrics()
+
 
 @router.get("/history")
-async def get_history(period: str = "30d"):
-    history = get_history_data(period)
-    return history
+def get_history(
+    period: str = "30d",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    return get_history_data(period=period, start=start, end=end)
+
+
+@router.post("/refresh")
+def refresh():
+    return refresh_and_get_metrics()

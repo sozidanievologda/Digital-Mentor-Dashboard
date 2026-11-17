@@ -11,5 +11,6 @@ venv/
 
 # Tests and dev tooling (not needed at runtime)
 tests/
+data/
 .mypy_cache/
 .ruff_cache/

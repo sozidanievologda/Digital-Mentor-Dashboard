@@ -1,225 +1,147 @@
 import logging
-import os
-import threading
-import time
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import date, timedelta
 
-from dateutil.parser import parse as parse_date
+from fastapi import HTTPException, status
 
-from .crm_service import fetch_all_users, fetch_all_managers
+from ..utils import config
+from . import collector, storage
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "300"))  # seconds (5 minutes)
-
-# One cached snapshot of the CRM data is shared by metrics and history, so a
-# dashboard load fetches the CRM once instead of once per endpoint.
-_cache = {"value": None, "expires_at": 0.0, "refreshing": False}
-_cache_lock = threading.Lock()
+MAX_HISTORY_DAYS = 730
+PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "quarter": 90}
 
 
-def _fetch_crm_data():
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        users_future = executor.submit(fetch_all_users)
-        managers_future = executor.submit(fetch_all_managers)
-        return {
-            "pensioners": users_future.result(),
-            "volunteers": managers_future.result(),
-            "fetched_at": datetime.now().isoformat(),
-        }
-
-
-def _refresh_cache():
+def _parse_day(value: str, field_name: str) -> date:
     try:
-        data = _fetch_crm_data()
-        with _cache_lock:
-            _cache["value"] = data
-            _cache["expires_at"] = time.time() + CACHE_TTL
-        logger.info("Кэш CRM обновлён в фоне")
-    except Exception as e:
-        logger.error(f"Не удалось обновить кэш CRM: {e}")
-    finally:
-        with _cache_lock:
-            _cache["refreshing"] = False
-
-
-def _get_crm_data():
-    now = time.time()
-
-    with _cache_lock:
-        if _cache["value"] is not None:
-            # Serve the cached snapshot immediately; if it is stale, refresh
-            # it in the background so requests never wait for the CRM.
-            if now >= _cache["expires_at"] and not _cache["refreshing"]:
-                _cache["refreshing"] = True
-                threading.Thread(target=_refresh_cache, daemon=True).start()
-            return _cache["value"]
-
-        # First load after startup: block until the data arrives.
-        data = _fetch_crm_data()
-        _cache["value"] = data
-        _cache["expires_at"] = time.time() + CACHE_TTL
-        return data
+        return date.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Некорректная дата в параметре {field_name}: {value}",
+        )
 
 
 def get_current_metrics():
-    try:
-        data = _get_crm_data()
-        result = {
-            "pensioners_count": len(data["pensioners"]),
-            "volunteers_count": len(data["volunteers"]),
-            "last_updated": data["fetched_at"],
-            "status": "active"
-        }
-        logger.info(
-            f"Метрики: пенсионеров {result['pensioners_count']}, "
-            f"волонтёров {result['volunteers_count']}"
+    snapshot = storage.get_latest_snapshot()
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Данные ещё не загружены из CRM",
         )
-        return result
-    except Exception as e:
-        logger.error(f"Ошибка в get_current_metrics: {e}")
-        return {
-            "pensioners_count": 0,
-            "volunteers_count": 0,
-            "last_updated": datetime.now().isoformat(),
-            "status": f"error: {str(e)}"
-        }
+
+    data_status = collector.get_data_status()
+    if data_status != "live":
+        collector.ensure_fresh()
+
+    last_success_at = storage.get_meta("last_success_at")
+    last_error = storage.get_meta("last_error") or None
+
+    return {
+        "pensioners_count": snapshot["project_users"],
+        "volunteers_count": snapshot["volunteers"],
+        "total_users": snapshot["total_users"],
+        "last_updated": snapshot["taken_at"],
+        "last_success_at": last_success_at,
+        "status": "active" if data_status == "live" else "stale",
+        "data_status": data_status,
+        "error": last_error,
+    }
 
 
-def _extract_item_date(item: dict):
-    # Try more specific fields first (last login, last activity, etc.)
-    priority_fields = [
-        "lastLogin", "last_login", "lastActivity", "last_activity",
-        "lastUpdate", "last_update", "updatedAt", "updated_at",
-        "modifiedAt", "modified_at", "modified", "lastSeen", "last_seen"
-    ]
-
-    # Then try creation date fields
-    date_fields = [
-        "createdAt", "created_at", "dateCreated", "createdDate", "addDate",
-        "registrationDate", "regDate", "reg_date", "created_on", "created",
-        "date", "date_added", "joined_at", "joinDate"
-    ]
-
-    # Try priority fields first (for volunteers with grouped creation dates)
-    for field in priority_fields:
-        value = item.get(field)
-        if not value:
-            continue
-        try:
-            if isinstance(value, (int, float)):
-                return datetime.fromtimestamp(int(value)).date()
-            parsed = parse_date(str(value))
-            return parsed.date()
-        except Exception:
-            continue
-
-    # Fall back to creation date fields
-    for field in date_fields:
-        value = item.get(field)
-        if not value:
-            continue
-        try:
-            if isinstance(value, (int, float)):
-                return datetime.fromtimestamp(int(value)).date()
-            parsed = parse_date(str(value))
-            return parsed.date()
-        except Exception:
-            continue
-    return None
-
-
-def _build_history_from_items(items: list[dict], days: int):
-    today = datetime.now().date()
-    start_date = today - timedelta(days=days - 1)
-
-    date_counts = Counter()
-    dates_found = 0
-    for item in items:
-        item_date = _extract_item_date(item)
-        if item_date is None:
-            continue
-        dates_found += 1
-        if item_date > today:
-            item_date = today
-        date_counts[item_date] += 1
-
-    logger.info(f"_build_history_from_items: из {len(items)} элементов найдено дат: {dates_found}")
-
-    if not date_counts:
-        logger.warning("Нет дат найдено, будет использована синтетическая генерация")
-        return []
-
-    base_count = sum(count for date, count in date_counts.items() if date < start_date)
-    history = []
-    cumulative = base_count
-
-    for day in range(days):
-        current = start_date + timedelta(days=day)
-        cumulative += date_counts.get(current, 0)
-        history.append({"date": current.strftime("%Y-%m-%d"), "count": cumulative})
-
-    logger.info(f"История построена из реальных дат: {len(history)} дней")
-    return history
-
-
-def _build_historical_series(total_count: int, days: int) -> list[int]:
-    if days <= 1:
-        return [total_count]
-
-    if days >= 90:
-        min_ratio = 0.1
-    elif days >= 30:
-        min_ratio = 0.2
-    else:
-        min_ratio = 0.4
-
-    series = []
-    for i in range(days):
-        progress = i / (days - 1)
-        value = int(total_count * (min_ratio + (1 - min_ratio) * (progress ** 1.8)))
-        series.append(value)
-    return series
-
-
-def get_history_data(period: str = "30d"):
+def refresh_and_get_metrics():
     try:
-        data = _get_crm_data()
+        collector.refresh_data(blocking=True)
+    except Exception as exc:
+        logger.warning(f"Ручное обновление не удалось: {exc}")
+    return get_current_metrics()
 
+
+def _resolve_range(period: str, start: str, end: str):
+    if start or end:
+        if not (start and end):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Для произвольного интервала нужны оба параметра: start и end",
+            )
+        start_date = _parse_day(start, "start")
+        end_date = _parse_day(end, "end")
+        period = "custom"
+    else:
+        end_date = date.today()
         if period == "all":
-            days = 365
+            first = storage.min_snapshot_date()
+            start_date = date.fromisoformat(first) if first else date.fromisoformat(
+                config.PROJECT_START_DATE
+            )
         else:
-            days = int(period[:-1])
+            days = PERIOD_DAYS.get(period)
+            if days is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="period должен быть одним из: 7d, 30d, 90d, quarter, all",
+                )
+            start_date = end_date - timedelta(days=days - 1)
 
-        pensioners_history = _build_history_from_items(data["pensioners"], days)
-        volunteers_history = _build_history_from_items(data["volunteers"], days)
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Дата начала не может быть позже даты окончания",
+        )
+    if (end_date - start_date).days > MAX_HISTORY_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Максимальный интервал — {MAX_HISTORY_DAYS} дней",
+        )
+    return period, start_date, end_date
 
-        if not pensioners_history:
-            pensioners_history = [
-                {"date": (datetime.now().date() - timedelta(days=days - 1 - idx)).strftime("%Y-%m-%d"),
-                 "count": count}
-                for idx, count in enumerate(_build_historical_series(len(data["pensioners"]), days))
-            ]
 
-        if not volunteers_history:
-            volunteers_history = [
-                {"date": (datetime.now().date() - timedelta(days=days - 1 - idx)).strftime("%Y-%m-%d"),
-                 "count": count}
-                for idx, count in enumerate(_build_historical_series(len(data["volunteers"]), days))
-            ]
+def _build_series(start_date: date, end_date: date):
+    rows = storage.get_snapshots(start_date.isoformat(), end_date.isoformat())
+    by_day = {row["snapshot_date"]: row for row in rows}
+    approximate = any(row["source"] == "backfill" for row in rows)
 
-        return {
-            "period": period,
-            "pensioners": pensioners_history,
-            "volunteers": volunteers_history
-        }
-    except Exception as e:
-        logger.error(f"Ошибка в get_history_data: {e}")
-        return {
-            "period": period,
-            "pensioners": [],
-            "volunteers": [],
-            "error": str(e)
-        }
+    baseline = storage.get_snapshot_before(start_date.isoformat())
+    pensioners = baseline["project_users"] if baseline else None
+    volunteers = baseline["volunteers"] if baseline else None
+
+    pensioners_series = []
+    volunteers_series = []
+    cursor = start_date
+    while cursor <= end_date:
+        row = by_day.get(cursor.isoformat())
+        if row:
+            pensioners = row["project_users"]
+            volunteers = row["volunteers"]
+        pensioners_series.append({"date": cursor.isoformat(), "count": pensioners})
+        volunteers_series.append({"date": cursor.isoformat(), "count": volunteers})
+        cursor += timedelta(days=1)
+
+    return pensioners_series, volunteers_series, approximate
+
+
+def get_history_data(period: str = "30d", start: str = None, end: str = None):
+    collector.ensure_fresh()
+
+    try:
+        period, start_date, end_date = _resolve_range(period, start, end)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Ошибка разбора периода: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Некорректные параметры периода",
+        )
+
+    pensioners, volunteers, approximate = _build_series(start_date, end_date)
+
+    return {
+        "period": period,
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "source": "snapshots",
+        "approximate": approximate,
+        "pensioners": pensioners,
+        "volunteers": volunteers,
+    }
