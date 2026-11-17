@@ -33,6 +33,43 @@ def test_upsert_replaces_in_place():
     assert output.strip().splitlines() == ["A=1", "MOYKLASS_API_KEY=new", "B=2"]
 
 
+def test_normalize_api_key_strips_paste_noise():
+    assert setup_env.normalize_api_key('  "abc123"  ') == "abc123"
+    assert setup_env.normalize_api_key("\ufeffabc123\n") == "abc123"
+    assert setup_env.normalize_api_key("abc123\nsecond-line") == "abc123"
+    assert setup_env.normalize_api_key("   \n") == ""
+
+
+def test_prompt_api_key_falls_back_to_clipboard(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *_: "")
+    monkeypatch.setattr(setup_env, "read_clipboard", lambda: "clip-key")
+    assert setup_env.prompt_api_key() == "clip-key"
+
+
+def test_prompt_api_key_keeps_current_on_empty_input(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *_: "")
+    monkeypatch.setattr(setup_env, "read_clipboard", lambda: "")
+    assert setup_env.prompt_api_key("existing") == "existing"
+
+
+def test_password_hidden_input(monkeypatch):
+    monkeypatch.setattr(setup_env.getpass, "getpass", lambda _: "hidden-pass")
+    assert setup_env._prompt_password("Пароль: ") == "hidden-pass"
+
+
+def test_password_visible_fallback(monkeypatch):
+    monkeypatch.setattr(setup_env.getpass, "getpass", lambda _: "")
+    answers = iter(["y", "secret123"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    assert setup_env._prompt_password("Пароль: ") == "secret123"
+
+
+def test_password_fallback_declined(monkeypatch):
+    monkeypatch.setattr(setup_env.getpass, "getpass", lambda _: "")
+    monkeypatch.setattr("builtins.input", lambda *_: "n")
+    assert setup_env._prompt_password("Пароль: ") == ""
+
+
 def test_setup_writes_valid_configuration(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
     monkeypatch.setattr(

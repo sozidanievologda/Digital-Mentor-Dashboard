@@ -72,6 +72,8 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 Флаги: `--no-start` (только настроить), `--local` (без Docker), `--docker` (только Docker). Для автоматизации: переменные `DM_API_KEY`, `DM_USERNAME`, `DM_PASSWORD` и `--no-input`.
 
+API-ключ вставляется через `Ctrl+V` (в Windows Terminal — правый клик). Если терминал не принимает вставку, скопируйте ключ в буфер обмена и нажмите Enter — скрипт возьмёт его оттуда.
+
 ## Конфигурация
 
 Все секреты хранятся в `backend/.env` (шаблон — `backend/.env.example`), файл добавлен в `.gitignore`.

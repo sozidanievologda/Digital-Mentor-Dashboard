@@ -15,6 +15,7 @@ import argparse
 import getpass
 import os
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 
@@ -102,12 +103,112 @@ def mask_secret(value: str) -> str:
     return f"{value[:4]}…{value[-4:]}"
 
 
-def _prompt(label, default=None, secret=False):
+def normalize_api_key(value: str) -> str:
+    """Trim whitespace, newlines, BOM and wrapping quotes from a pasted key."""
+    if not value:
+        return ""
+    lines = [line for line in value.strip().splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return lines[0].strip().lstrip("\ufeff").strip('"').strip("'").strip()
+
+
+def read_clipboard() -> str:
+    """Best-effort clipboard read without external dependencies."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            if not user32.OpenClipboard(None):
+                return ""
+            try:
+                handle = user32.GetClipboardData(13)  # CF_UNICODETEXT
+                if not handle:
+                    return ""
+                pointer = kernel32.GlobalLock(handle)
+                if not pointer:
+                    return ""
+                try:
+                    return ctypes.wstring_at(pointer)
+                finally:
+                    kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+
+        if sys.platform == "darwin":
+            result = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+            return result.stdout if result.returncode == 0 else ""
+
+        for command in (
+            ["wl-paste", "--no-newline"],
+            ["xclip", "-selection", "clipboard", "-o"],
+            ["xsel", "--clipboard", "--output"],
+        ):
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+            except FileNotFoundError:
+                continue
+            if result.returncode == 0:
+                return result.stdout
+    except Exception:
+        return ""
+    return ""
+
+
+def _safe_input(prompt: str) -> str:
+    try:
+        return input(prompt)
+    except EOFError:
+        raise SystemExit("Ввод прерван")
+
+
+def _prompt_password(label: str) -> str:
+    try:
+        value = getpass.getpass(label)
+    except (EOFError, OSError):
+        value = ""
+    if value:
+        return value
+
+    # getpass reads character by character and may swallow pasted text on
+    # Windows. Offer a visible fallback where Ctrl+V works.
+    answer = _safe_input(
+        "Скрытый ввод недоступен или пуст. Ввести видимым текстом? [y/N]: "
+    ).strip().lower()
+    if answer in ("y", "yes", "д", "да"):
+        return _safe_input("Пароль: ")
+    return ""
+
+
+def prompt_api_key(current: str = "") -> str:
+    while True:
+        if current:
+            label = (
+                f"API-ключ «МойКласс» уже задан ({mask_secret(current)}). "
+                "Enter — оставить, или вставьте новый: "
+            )
+        else:
+            label = (
+                "API-ключ «МойКласс» (Ctrl+V / правый клик; "
+                "Enter — взять из буфера обмена): "
+            )
+        entered = normalize_api_key(_safe_input(label))
+        if not entered:
+            entered = normalize_api_key(read_clipboard())
+            if entered:
+                print(f"Ключ взят из буфера обмена: {mask_secret(entered)}")
+        if entered:
+            return entered
+        if current:
+            return current
+        print("Ключ не введён, попробуйте ещё раз.")
+
+
+def _prompt(label, default=None):
     hint = f" [{default}]" if default else ""
-    if secret:
-        value = getpass.getpass(f"{label}{hint}: ").strip()
-    else:
-        value = input(f"{label}{hint}: ").strip()
+    value = _safe_input(f"{label}{hint}: ").strip()
     return value or default
 
 
@@ -126,16 +227,12 @@ def main():
     interactive = not args.no_input and sys.stdin.isatty()
 
     api_key = args.api_key or os.getenv("DM_API_KEY") or existing.get("MOYKLASS_API_KEY")
-    if api_key and interactive and not (args.api_key or os.getenv("DM_API_KEY")):
-        entered = getpass.getpass(
-            f"API-ключ «МойКласс» уже задан ({mask_secret(api_key)}), Enter — оставить: "
-        ).strip()
-        if entered:
-            api_key = entered
+    if interactive and not (args.api_key or os.getenv("DM_API_KEY")):
+        api_key = prompt_api_key(api_key or "")
     elif not api_key:
         if not interactive:
             parser.error("не задан API-ключ: используйте --api-key или DM_API_KEY")
-        api_key = getpass.getpass("API-ключ «МойКласс»: ").strip()
+        api_key = prompt_api_key()
     if not api_key:
         parser.error("API-ключ обязателен")
 
@@ -153,7 +250,7 @@ def main():
     if password:
         password_hash = hash_password(password)
     elif password_hash and interactive:
-        entered = getpass.getpass("Новый пароль (Enter — оставить прежний): ")
+        entered = _prompt_password("Новый пароль (Enter — оставить прежний): ")
         if entered:
             password = entered
             if len(password) < 8:
@@ -163,11 +260,11 @@ def main():
         if not interactive:
             parser.error("не задан пароль: используйте --password или DM_PASSWORD")
         while True:
-            password = getpass.getpass("Пароль для дашборда: ")
+            password = _prompt_password("Пароль для дашборда: ")
             if len(password) < 8:
                 print("Пароль должен быть не короче 8 символов")
                 continue
-            if password != getpass.getpass("Повторите пароль: "):
+            if password != _prompt_password("Повторите пароль: "):
                 print("Пароли не совпадают")
                 continue
             password_hash = hash_password(password)
