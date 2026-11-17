@@ -54,5 +54,15 @@ digital_mentor_dashboard/
 
 └── README.md                      # Документация
 
+## Конфигурация
+
+API-ключ CRM «МойКласс» не хранится в репозитории и передаётся через переменные окружения:
+
+1. Скопируйте `backend/.env.example` в `backend/.env`.
+2. Укажите ключ в `MOYKLASS_API_KEY`.
+3. Остальные переменные (`MOYKLASS_AUTH_URL`, `MOYKLASS_USERS_URL`, `MOYKLASS_MANAGERS_URL`) опциональны — по умолчанию используются публичные адреса API.
+
+Файл `backend/.env` добавлен в `.gitignore` и не должен попадать в git. В Docker переменные окружения передаются через `--env-file` или `environment`.
+
 
 

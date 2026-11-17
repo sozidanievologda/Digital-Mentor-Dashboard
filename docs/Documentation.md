@@ -27,7 +27,7 @@
 
 Структура и важные изменения :
 
-- `backend/app/utils/config.py` — конфигурация API (ключ, эндпоинты).
+- `backend/app/utils/config.py` — конфигурация API. Ключ и адреса эндпоинтов читаются из переменных окружения (`backend/.env`, шаблон — `backend/.env.example`).
 - `backend/app/services/crm_service.py` — работа с API "МойКласс" (аутентификация, пагинация).
 - `backend/app/services/data_processing.py` — обработка и построение метрик/истории.
 - `backend/app/api/dashboard_data.py` — роуты REST API.
