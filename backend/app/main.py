@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from app.api import auth, dashboard_data
 from app.security import get_current_user
 from app.services import collector, storage
+from app.utils import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

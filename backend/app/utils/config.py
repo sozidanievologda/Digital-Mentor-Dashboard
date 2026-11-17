@@ -41,3 +41,14 @@ DATA_TTL_SECONDS = int(_text("DATA_TTL_SECONDS", "3600"))
 PROJECT_TAG_PREFIX = _text("PROJECT_TAG_PREFIX", "ФПГ_ЦН")
 PROJECT_TAG_NAMES = [name.strip() for name in _text("PROJECT_TAG_NAMES").split(",") if name.strip()]
 PROJECT_START_DATE = _text("PROJECT_START_DATE", "2025-02-01")
+
+# Comma-separated browser origins allowed to call the API. "null" covers pages
+# opened via file:// during local development. Same-origin requests (Docker)
+# do not need CORS at all.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in _text(
+        "CORS_ORIGINS", "http://localhost:8080,http://localhost:8000,null"
+    ).split(",")
+    if origin.strip()
+]

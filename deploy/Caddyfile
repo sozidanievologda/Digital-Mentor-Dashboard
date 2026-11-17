@@ -1,0 +1,6 @@
+# Замените домен на реальный либо задайте DASHBOARD_DOMAIN в окружении.
+# Caddy сам получит и будет обновлять сертификат Let's Encrypt.
+{$DASHBOARD_DOMAIN:dashboard.example.com} {
+    encode gzip
+    reverse_proxy frontend:80
+}

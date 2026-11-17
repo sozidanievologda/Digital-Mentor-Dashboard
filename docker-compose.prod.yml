@@ -1,0 +1,19 @@
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN:-dashboard.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy-data:
+  caddy-config:
