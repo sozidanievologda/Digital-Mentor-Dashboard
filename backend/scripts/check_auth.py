@@ -51,7 +51,7 @@ def main() -> int:
     password_ok = credentials_valid(username, password)
     secret_ok = bool(config.SESSION_SECRET)
 
-    print(f"backend/.env:            {config.BACKEND_DIR / '.env'}")
+    print(f"конфигурация:            {config.BACKEND_DIR / '.env' if (config.BACKEND_DIR / '.env').exists() else 'переменные окружения (Docker/CI)'}")
     print(f"авторизация настроена:   {'да' if configured else 'НЕТ'}")
     print(f"логин совпадает:         {'да' if username_ok else 'НЕТ'}")
     print(f"пароль подходит:         {'да' if password_ok else 'НЕТ'}")
