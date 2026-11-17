@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import auth, dashboard_data
-from app.security import get_current_user
+from app.security import auth_configured, get_current_user
 from app.services import collector, storage
 from app.utils import config
 
@@ -19,6 +19,11 @@ async def lifespan(app: FastAPI):
     storage.init_db()
     collector.startup_refresh()
     collector.start_scheduler()
+    if not auth_configured():
+        logger.warning(
+            "Dashboard auth is not configured: set DASHBOARD_USERNAME and "
+            "DASHBOARD_PASSWORD_HASH (or DASHBOARD_PASSWORD) in backend/.env"
+        )
     logger.info("Starting up...")
     yield
     collector.stop_scheduler()
@@ -53,6 +58,7 @@ def health():
         "status": "ok",
         "data_status": collector.get_data_status(),
         "last_success_at": storage.get_meta("last_success_at"),
+        "auth_configured": auth_configured(),
     }
 
 
