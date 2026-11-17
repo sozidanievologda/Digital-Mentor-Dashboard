@@ -226,7 +226,9 @@ start frontend\index.html
 | `running scripts is disabled` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | Метрики долго грузятся или `status: error` | CRM иногда обрывает соединение при выгрузке; повторите запрос и посмотрите `docker compose logs -f backend` |
 | В дашборде нули | Проверьте ключ в `backend\.env` и логи бэкенда; при ошибке CRM API отдаёт 200 с нулями и текстом в `status` |
-| 401 при входе | Неверный логин/пароль или не заполнен `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD_HASH` |
+| 401 при входе | Неверный логин/пароль, либо контейнер не перечитал `.env`. Пересоздайте backend: `docker compose up -d --force-recreate backend`, затем проверьте данные скриптом `python scripts\check_auth.py --api-url http://localhost:8080/api` |
+| Пароль не подходит (401) | Задайте новый: `cd backend`, `$env:DM_PASSWORD = "новый-пароль"`, `python scripts\setup_env.py --no-input`, затем `docker compose up -d --force-recreate backend` и `Ctrl+F5` |
+| Вход проходит, но дашборд сразу 401 | `SESSION_SECRET` не задан или разный у нескольких процессов. Задайте постоянный секрет в `.env` и запускайте один процесс uvicorn |
 | 503 «Авторизация не настроена» | В `backend\.env` не заданы учётные данные — добавьте `DASHBOARD_USERNAME` и `DASHBOARD_PASSWORD_HASH` (или `DASHBOARD_PASSWORD`) |
 | Данные не обновились | Фоновое обновление раз в час; нажмите «Обновить» в дашборде или `docker compose restart backend` |
 | Кириллица в логах/файлах | Файлы проекта в UTF-8; для `.env` достаточно ASCII |

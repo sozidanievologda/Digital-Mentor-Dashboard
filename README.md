@@ -94,6 +94,13 @@ API-ключ вставляется через `Ctrl+V` (в Windows Terminal —
 
 API дашборда защищён: без входа `/api/dashboard/*` возвращает 401. Логин и пароль — те, что заданы в `.env`.
 
+Если вход не проходит, проверьте учётные данные и запущенный API:
+
+```bash
+cd backend
+python scripts/check_auth.py --api-url http://localhost:8080/api
+```
+
 ## Запуск через Docker
 
 Требуется Docker с плагином Compose v2.
@@ -136,8 +143,7 @@ python -m uvicorn app.main:app --reload --port 8000
 
 ## Документация
 
-- [`docs/Documentation.md`](docs/Documentation.md) — архитектура, конфигурация, эксплуатация.
-- [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) — описание API (Приложение Б к ТЗ).
+- [`docs/Documentation.md`](docs/Documentation.md) — архитектура, конфигурация, эксплуатация.- [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) — описание API (Приложение Б к ТЗ).
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — развёртывание на сервере, HTTPS, бэкапы, ротация секретов.
 - [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) — методика расчёта и чек-лист приёмки.
 - [`docs/RUNNING_ON_WINDOWS.md`](docs/RUNNING_ON_WINDOWS.md) — запуск на Windows.
