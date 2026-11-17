@@ -102,5 +102,7 @@ python -m uvicorn app.main:app --reload --port 8000
 
 Затем открыть `frontend/index.html` в браузере: при `file://` фронтенд обращается к `http://localhost:8000`.
 
+Подробная инструкция для Windows (Docker Desktop и Python): [`docs/RUNNING_ON_WINDOWS.md`](docs/RUNNING_ON_WINDOWS.md).
+
 
 
