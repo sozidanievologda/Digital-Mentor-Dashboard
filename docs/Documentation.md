@@ -5,6 +5,13 @@
 - Python 3.11+ (желательно в virtualenv)
 - Docker + Compose v2 (опционально)
 
+Быстрый старт
+
+- Linux/macOS: `./setup.sh`
+- Windows: `powershell -ExecutionPolicy Bypass -File .\setup.ps1`
+
+Скрипт заполняет `backend/.env` (ключ, логин, хеш пароля, `SESSION_SECRET`, CORS) и запускает Docker либо локальный `uvicorn`. Повторный запуск сохраняет существующие секреты.
+
 Запуск через Docker (рекомендовано)
 
 1. Создайте `backend/.env` по шаблону `backend/.env.example`.

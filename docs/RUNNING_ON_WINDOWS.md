@@ -11,6 +11,27 @@
 
 Ключ CRM «МойКласс» (`MOYKLASS_API_KEY`) должен быть у вас на руках.
 
+## Быстрый старт (рекомендуется)
+
+Из корня проекта:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+Скрипт сам:
+
+- найдёт Python 3.11+ (или использует Docker, если Python нет);
+- спросит API-ключ, логин и пароль;
+- сгенерирует `DASHBOARD_PASSWORD_HASH` и `SESSION_SECRET`;
+- заполнит `backend\.env`;
+- запустит Docker, если Docker Desktop работает, иначе — локальный `uvicorn`;
+- откроет дашборд в браузере.
+
+Повторный запуск безопасен: существующие ключ и хеш пароля сохраняются. Флаги: `-NoStart`, `-Local`, `-Docker`.
+
+Ниже — те же шаги вручную.
+
 ---
 
 ## Вариант 1. Docker Desktop (рекомендуется)

@@ -47,8 +47,30 @@ docs/
   RUNNING_ON_WINDOWS.md
   TZ_RESEARCH_AND_PLAN.md
 docker-compose.yml
+docker-compose.prod.yml
 nginx.conf
+setup.sh
+setup.ps1
 ```
+
+## Быстрый старт
+
+**Linux / macOS:**
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+Скрипт спросит API-ключ «МойКласс», логин и пароль, сгенерирует хеш пароля и `SESSION_SECRET`, заполнит `backend/.env` и запустит проект: Docker, если он доступен, иначе локальный `uvicorn`. Повторный запуск безопасен — существующие значения сохраняются.
+
+Флаги: `--no-start` (только настроить), `--local` (без Docker), `--docker` (только Docker). Для автоматизации: переменные `DM_API_KEY`, `DM_USERNAME`, `DM_PASSWORD` и `--no-input`.
 
 ## Конфигурация
 
