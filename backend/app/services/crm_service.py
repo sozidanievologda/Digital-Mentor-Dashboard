@@ -1,24 +1,63 @@
-import requests
-from ..utils.config import API_KEY, URL_AUTH, USERS_API_URL, MANAGERS_API_URL
 import logging
+import math
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+
+import requests
+
+from ..utils.config import API_KEY, URL_AUTH, USERS_API_URL, MANAGERS_API_URL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PAGE_LIMIT = 100
-MAX_PAGES = 50
+# The CRM rejects limit > 500, so 500 is the largest page we can request.
+PAGE_LIMIT = 500
+MAX_PAGES = 100
+MAX_WORKERS = 4
+TOKEN_REFRESH_MARGIN = 60  # seconds
+
+_token_lock = threading.Lock()
+_token_cache = {"value": None, "expires_at": 0.0}
+
+
+def _parse_expiry(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def get_token_api():
-    post_auth = {'apiKey': API_KEY}
-    headers = {'Content-Type': 'application/json'}
-    try:
-        response = requests.post(URL_AUTH, json=post_auth, headers=headers, timeout=30)
-        response.raise_for_status()
-        return response.json()['accessToken']
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка аутентификации: {e}")
-        raise Exception(f"Ошибка аутентификации: {e}")
+    """Return a cached access token, refreshing it shortly before expiry."""
+    with _token_lock:
+        now = time.time()
+        if _token_cache["value"] and now < _token_cache["expires_at"] - TOKEN_REFRESH_MARGIN:
+            return _token_cache["value"]
+
+        post_auth = {'apiKey': API_KEY}
+        headers = {'Content-Type': 'application/json'}
+        try:
+            response = requests.post(URL_AUTH, json=post_auth, headers=headers, timeout=30)
+            response.raise_for_status()
+            payload = response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка аутентификации: {e}")
+            raise Exception(f"Ошибка аутентификации: {e}")
+
+        token = payload.get("accessToken")
+        if not token:
+            raise Exception(f"Ошибка аутентификации: пустой ответ {payload}")
+
+        _token_cache["value"] = token
+        _token_cache["expires_at"] = _parse_expiry(payload.get("expiresAt")) or now + 3600
+        return token
 
 
 def _extract_items_from_response(data, possible_keys):
@@ -35,74 +74,121 @@ def _extract_items_from_response(data, possible_keys):
     return []
 
 
-def _fetch_all_pages(api_url, possible_keys, entity_label):
-    """Загружает все записи, защищаясь от API без рабочей пагинации.
+def _total_items(data):
+    """Read totalItems from the CRM response metadata, if present."""
+    if isinstance(data, dict):
+        stats = data.get("stats")
+        if isinstance(stats, dict):
+            total = stats.get("totalItems")
+            if isinstance(total, int) and total >= 0:
+                return total
+    return None
 
-    Некоторые эндпоинты «МойКласс» игнорируют limit/offset и возвращают
-    один и тот же список на любой странице. Чтобы не превращать это в
-    дубликаты, останавливаемся, когда страница не приносит новых записей
-    (сравнение по id).
-    """
-    access_token = get_token_api()
-    offset = 0
-    all_items = []
-    seen_ids = set()
 
-    for page in range(1, MAX_PAGES + 1):
-        params = {'limit': PAGE_LIMIT, 'offset': offset}
-        headers = {"x-access-token": access_token, "Content-Type": "application/json"}
+def _request_page(api_url, token, offset):
+    params = {'limit': PAGE_LIMIT, 'offset': offset}
+    headers = {"x-access-token": token, "Content-Type": "application/json"}
 
+    last_error = None
+    for attempt in range(2):
         try:
             response = requests.get(api_url, headers=headers, params=params, timeout=30)
             response.raise_for_status()
-            data = response.json()
+            return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка при получении {entity_label}: {e}")
-            raise Exception(f"Ошибка при получении {entity_label}: {e}")
+            last_error = e
+            if attempt == 0:
+                time.sleep(0.5)
+    raise Exception(str(last_error))
 
-        items = _extract_items_from_response(data, possible_keys)
-        if not items:
-            break
 
-        new_items = []
+def _dedupe(pages):
+    """Flatten pages in order, dropping records with an already seen id."""
+    all_items = []
+    seen_ids = set()
+    for _, items in pages:
         for item in items:
             item_id = item.get("id")
             if item_id is not None:
                 if item_id in seen_ids:
                     continue
                 seen_ids.add(item_id)
-            new_items.append(item)
+            all_items.append(item)
+    return all_items
 
-        if not new_items:
+
+def _fetch_all_pages(api_url, possible_keys, entity_label):
+    """Load every record, in parallel when the API reports a total count.
+
+    Some MoyKlass endpoints ignore limit/offset and return the same list on
+    every page, so records are deduplicated by id and pagination stops as
+    soon as a page brings nothing new.
+    """
+    token = get_token_api()
+
+    first_data = _request_page(api_url, token, 0)
+    first_items = _extract_items_from_response(first_data, possible_keys)
+    if not first_items:
+        return []
+
+    total = _total_items(first_data)
+    pages = [(0, first_items)]
+
+    if total is not None:
+        total_pages = max(1, math.ceil(total / PAGE_LIMIT))
+        if total_pages > MAX_PAGES:
             logger.warning(
-                f"{entity_label.capitalize()}: страница {page} не содержит новых записей — "
-                f"API игнорирует пагинацию, останавливаю загрузку"
+                f"Для {entity_label} требуется {total_pages} страниц, "
+                f"но лимит {MAX_PAGES}; данные могут быть неполными"
             )
-            break
+            total_pages = MAX_PAGES
 
-        all_items.extend(new_items)
-        logger.info(
-            f"Страница {page}: получено {len(items)} {entity_label}, "
-            f"новых: {len(new_items)}, всего: {len(all_items)}"
-        )
+        if total_pages > 1:
+            offsets = [page * PAGE_LIMIT for page in range(1, total_pages)]
 
-        if len(items) < PAGE_LIMIT:
-            break
+            def fetch_page(offset):
+                data = _request_page(api_url, token, offset)
+                return offset, _extract_items_from_response(data, possible_keys)
 
-        if len(new_items) < len(items):
-            logger.warning(
-                f"{entity_label.capitalize()}: страница {page} содержит уже загруженные "
-                f"записи — пагинация не продвигается, останавливаю загрузку"
-            )
-            break
-
-        offset += len(items)
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                pages.extend(
+                    sorted(
+                        executor.map(fetch_page, offsets),
+                        key=lambda pair: pair[0],
+                    )
+                )
     else:
-        logger.warning(
-            f"Достигнут максимум страниц ({MAX_PAGES}) для {entity_label}: "
-            f"загружено {len(all_items)} записей, данные могут быть неполными"
-        )
+        # No total in the response: walk pages until a short or repeated one.
+        offset = len(first_items)
+        page = 1
+        while len(first_items) >= PAGE_LIMIT and page < MAX_PAGES:
+            page += 1
+            data = _request_page(api_url, token, offset)
+            items = _extract_items_from_response(data, possible_keys)
+            if not items:
+                break
 
+            seen_ids = {item.get("id") for item in first_items if item.get("id") is not None}
+            new_items = [
+                item for item in items
+                if item.get("id") is None or item.get("id") not in seen_ids
+            ]
+            if not new_items:
+                logger.warning(
+                    f"{entity_label.capitalize()}: страница {page} не содержит новых записей — "
+                    f"API игнорирует пагинацию, останавливаю загрузку"
+                )
+                break
+
+            pages.append((offset, items))
+            first_items = items
+            offset += len(items)
+
+    all_items = _dedupe(pages)
+    logger.info(
+        f"{entity_label.capitalize()}: загружено страниц {len(pages)}, "
+        f"записей {len(all_items)} (totalItems={total})"
+    )
     return all_items
 
 
@@ -124,10 +210,6 @@ def fetch_all_managers():
     try:
         all_managers = _fetch_all_pages(MANAGERS_API_URL, ['managers', 'data', 'items'], "волонтёров")
         logger.info(f"Получено {len(all_managers)} волонтеров")
-
-        # Debug: log first manager's keys
-        if all_managers:
-            logger.info(f"Поля первого волонтёра: {list(all_managers[0].keys())}")
 
         enabled_count = sum(1 for m in all_managers if m.get('enabled'))
         disabled_count = sum(1 for m in all_managers if not m.get('enabled'))

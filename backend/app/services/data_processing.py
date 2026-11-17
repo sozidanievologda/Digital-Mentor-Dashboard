@@ -1,45 +1,82 @@
-from collections import Counter
-from datetime import datetime, timedelta
-from dateutil.parser import parse as parse_date
-from .crm_service import fetch_all_users, fetch_all_managers
 import logging
+import os
+import threading
 import time
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+
+from dateutil.parser import parse as parse_date
+
+from .crm_service import fetch_all_users, fetch_all_managers
 
 logger = logging.getLogger(__name__)
-_cache = {
-    "metrics": {"value": None, "expires_at": 0},
-    "history": {"value": {}, "expires_at": 0}
-}
-CACHE_TTL = 300  # секунды (5 минут)
+
+CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "300"))  # seconds (5 minutes)
+
+# One cached snapshot of the CRM data is shared by metrics and history, so a
+# dashboard load fetches the CRM once instead of once per endpoint.
+_cache = {"value": None, "expires_at": 0.0, "refreshing": False}
+_cache_lock = threading.Lock()
 
 
-def _is_cache_valid(key: str):
-    return time.time() < _cache[key]["expires_at"]
+def _fetch_crm_data():
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        users_future = executor.submit(fetch_all_users)
+        managers_future = executor.submit(fetch_all_managers)
+        return {
+            "pensioners": users_future.result(),
+            "volunteers": managers_future.result(),
+            "fetched_at": datetime.now().isoformat(),
+        }
 
 
-def _set_cache(key: str, value):
-    _cache[key]["value"] = value
-    _cache[key]["expires_at"] = time.time() + CACHE_TTL
+def _refresh_cache():
+    try:
+        data = _fetch_crm_data()
+        with _cache_lock:
+            _cache["value"] = data
+            _cache["expires_at"] = time.time() + CACHE_TTL
+        logger.info("Кэш CRM обновлён в фоне")
+    except Exception as e:
+        logger.error(f"Не удалось обновить кэш CRM: {e}")
+    finally:
+        with _cache_lock:
+            _cache["refreshing"] = False
+
+
+def _get_crm_data():
+    now = time.time()
+
+    with _cache_lock:
+        if _cache["value"] is not None:
+            # Serve the cached snapshot immediately; if it is stale, refresh
+            # it in the background so requests never wait for the CRM.
+            if now >= _cache["expires_at"] and not _cache["refreshing"]:
+                _cache["refreshing"] = True
+                threading.Thread(target=_refresh_cache, daemon=True).start()
+            return _cache["value"]
+
+        # First load after startup: block until the data arrives.
+        data = _fetch_crm_data()
+        _cache["value"] = data
+        _cache["expires_at"] = time.time() + CACHE_TTL
+        return data
 
 
 def get_current_metrics():
     try:
-        if _is_cache_valid("metrics"):
-            logger.info("Возвращаю закэшированные метрики")
-            return _cache["metrics"]["value"]
-
-        pensioners = fetch_all_users()
-        volunteers = fetch_all_managers()
-
+        data = _get_crm_data()
         result = {
-            "pensioners_count": len(pensioners),
-            "volunteers_count": len(volunteers),
-            "last_updated": datetime.now().isoformat(),
+            "pensioners_count": len(data["pensioners"]),
+            "volunteers_count": len(data["volunteers"]),
+            "last_updated": data["fetched_at"],
             "status": "active"
         }
-        _set_cache("metrics", result)
-        logger.info(f"Текущее количество пенсионеров: {len(pensioners)}")
-        logger.info(f"Текущее количество волонтеров: {len(volunteers)}")
+        logger.info(
+            f"Метрики: пенсионеров {result['pensioners_count']}, "
+            f"волонтёров {result['volunteers_count']}"
+        )
         return result
     except Exception as e:
         logger.error(f"Ошибка в get_current_metrics: {e}")
@@ -58,7 +95,7 @@ def _extract_item_date(item: dict):
         "lastUpdate", "last_update", "updatedAt", "updated_at",
         "modifiedAt", "modified_at", "modified", "lastSeen", "last_seen"
     ]
-    
+
     # Then try creation date fields
     date_fields = [
         "createdAt", "created_at", "dateCreated", "createdDate", "addDate",
@@ -78,7 +115,7 @@ def _extract_item_date(item: dict):
             return parsed.date()
         except Exception:
             continue
-    
+
     # Fall back to creation date fields
     for field in date_fields:
         value = item.get(field)
@@ -110,8 +147,7 @@ def _build_history_from_items(items: list[dict], days: int):
         date_counts[item_date] += 1
 
     logger.info(f"_build_history_from_items: из {len(items)} элементов найдено дат: {dates_found}")
-    logger.info(f"Date counts: {dict(date_counts)}")
-    
+
     if not date_counts:
         logger.warning("Нет дат найдено, будет использована синтетическая генерация")
         return []
@@ -124,7 +160,7 @@ def _build_history_from_items(items: list[dict], days: int):
         current = start_date + timedelta(days=day)
         cumulative += date_counts.get(current, 0)
         history.append({"date": current.strftime("%Y-%m-%d"), "count": cumulative})
-    
+
     logger.info(f"История построена из реальных дат: {len(history)} дней")
     return history
 
@@ -150,43 +186,35 @@ def _build_historical_series(total_count: int, days: int) -> list[int]:
 
 def get_history_data(period: str = "30d"):
     try:
-        if _is_cache_valid("history") and period in _cache["history"]["value"]:
-            logger.info("Возвращаю закэшированные исторические данные")
-            return _cache["history"]["value"][period]
-
-        pensioners = fetch_all_users()
-        volunteers = fetch_all_managers()
+        data = _get_crm_data()
 
         if period == "all":
             days = 365
         else:
             days = int(period[:-1])
 
-        pensioners_history = _build_history_from_items(pensioners, days)
-        volunteers_history = _build_history_from_items(volunteers, days)
+        pensioners_history = _build_history_from_items(data["pensioners"], days)
+        volunteers_history = _build_history_from_items(data["volunteers"], days)
 
         if not pensioners_history:
             pensioners_history = [
                 {"date": (datetime.now().date() - timedelta(days=days - 1 - idx)).strftime("%Y-%m-%d"),
                  "count": count}
-                for idx, count in enumerate(_build_historical_series(len(pensioners), days))
+                for idx, count in enumerate(_build_historical_series(len(data["pensioners"]), days))
             ]
 
         if not volunteers_history:
             volunteers_history = [
                 {"date": (datetime.now().date() - timedelta(days=days - 1 - idx)).strftime("%Y-%m-%d"),
                  "count": count}
-                for idx, count in enumerate(_build_historical_series(len(volunteers), days))
+                for idx, count in enumerate(_build_historical_series(len(data["volunteers"]), days))
             ]
 
-        result = {
+        return {
             "period": period,
             "pensioners": pensioners_history,
             "volunteers": volunteers_history
         }
-        _cache["history"]["value"][period] = result
-        _cache["history"]["expires_at"] = time.time() + CACHE_TTL
-        return result
     except Exception as e:
         logger.error(f"Ошибка в get_history_data: {e}")
         return {
