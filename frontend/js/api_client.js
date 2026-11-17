@@ -1,4 +1,10 @@
-const API_BASE_URL = "http://localhost:8000/api/dashboard";
+// Same-origin by default (nginx proxies /api in Docker). When the page is
+// opened directly from disk for local development, talk to the local backend.
+const API_BASE_URL =
+    window.DASHBOARD_API_BASE_URL ||
+    (window.location.protocol === "file:"
+        ? "http://localhost:8000/api/dashboard"
+        : "/api/dashboard");
 
 async function fetchMetrics() {
     try {

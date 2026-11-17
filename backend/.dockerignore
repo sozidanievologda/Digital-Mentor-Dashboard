@@ -1,0 +1,15 @@
+# Keep local secrets and Python artifacts out of the image build context.
+.env
+.env.*
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Tests and dev tooling (not needed at runtime)
+tests/
+.mypy_cache/
+.ruff_cache/
