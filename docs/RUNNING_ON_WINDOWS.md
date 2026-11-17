@@ -39,14 +39,32 @@ cd Digital-Mentor-Dashboard
 
 Если проект уже склонирован — просто перейдите в его папку.
 
-### 3. Создать `.env` с ключом
+### 3. Создать `.env` с ключом и учётными данными
 
 ```powershell
 Copy-Item backend\.env.example backend\.env
 notepad backend\.env
 ```
 
-Вставьте ключ в строку `MOYKLASS_API_KEY=...`, сохраните файл (кодировка ASCII или UTF-8 без BOM — ключ и адреса состоят из латиницы). Файл `backend\.env` уже в `.gitignore`, коммитить его нельзя.
+Заполните:
+
+- `MOYKLASS_API_KEY` — ключ API «МойКласс»;
+- `DASHBOARD_USERNAME` — логин для входа в дашборд;
+- `SESSION_SECRET` — любая длинная случайная строка (например, 64 символа);
+- `DASHBOARD_PASSWORD_HASH` — хеш пароля. Сгенерировать можно так:
+
+  ```powershell
+  cd backend
+  py -3.12 -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python scripts\hash_password.py
+  ```
+
+  Скопируйте вывод в `DASHBOARD_PASSWORD_HASH` и вернитесь в корень: `cd ..`.
+
+  Если Python нет, для локального запуска можно временно использовать `DASHBOARD_PASSWORD=ваш-пароль` (без хеша), но для постоянной работы лучше хеш.
+
+Сохраните файл в ASCII или UTF-8 без BOM. Файл `backend\.env` уже в `.gitignore`, коммитить его нельзя.
 
 ### 4. Запустить
 
@@ -60,6 +78,8 @@ docker compose up -d --build
 
 - Дашборд: <http://localhost:8080>
 - Swagger: <http://localhost:8080/docs>
+
+Войдите под логином и паролем, которые указали в `backend\.env`. API без входа возвращает 401.
 
 Первый запрос к метрикам может занять **30–60 секунд**: бэкенд постранично выгружает данные из CRM, дальше 5 минут работает кэш.
 
@@ -117,7 +137,13 @@ Copy-Item backend\.env.example backend\.env
 notepad backend\.env
 ```
 
-Впишите `MOYKLASS_API_KEY` и сохраните.
+Заполните `MOYKLASS_API_KEY`, `DASHBOARD_USERNAME`, `SESSION_SECRET` и `DASHBOARD_PASSWORD_HASH` (или `DASHBOARD_PASSWORD`). Хеш пароля генерируется командой:
+
+```powershell
+python scripts\hash_password.py
+```
+
+(выполнять из папки `backend` с активированным venv).
 
 ### 4. Запустить бэкенд
 
@@ -142,7 +168,7 @@ Invoke-RestMethod http://localhost:8000/api/dashboard/metrics
 start frontend\index.html
 ```
 
-Страница откроется по `file://`, и клиент автоматически обратится к `http://localhost:8000`. CORS на бэкенде разрешён, поэтому этот способ работает.
+Страница откроется по `file://`, и клиент автоматически обратится к `http://localhost:8000`. CORS на бэкенде разрешён, поэтому этот способ работает. Войдите под логином и паролем из `backend\.env`.
 
 > Не запускайте фронтенд через `python -m http.server`: в этом режиме клиент использует относительный путь `/api`, а прокси в таком случае нет. Для HTTP-раздачи используйте Docker-вариант.
 
@@ -170,14 +196,44 @@ start frontend\index.html
 | `docker: command not found` | Docker Desktop не установлен или не в PATH — перезапустите PowerShell после установки |
 | `docker compose` — unknown command | Обновите Docker Desktop; как запасной вариант используйте `docker-compose` |
 | `failed to connect to the docker API` | Docker Desktop не запущен — запустите и дождитесь статуса Running |
+| `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified` | Docker Desktop не запущен или Linux-движок не стартовал. Запустите Docker Desktop, дождитесь **Engine running**, проверьте `docker info` и повторите `docker compose up -d --build` |
 | `env file ... not found` | Не создан `backend\.env` — выполните `Copy-Item backend\.env.example backend\.env` |
 | Порт 8080 занят | `netstat -ano \| findstr :8080`, затем `taskkill /PID <pid> /F`; либо поменяйте `"8080:80"` в `docker-compose.yml` |
 | Порт 8000 занят (локальный запуск) | Запустите uvicorn на другом порту (`--port 8001`) либо закройте старый процесс |
 | `running scripts is disabled` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | Метрики долго грузятся или `status: error` | CRM иногда обрывает соединение при выгрузке; повторите запрос и посмотрите `docker compose logs -f backend` |
 | В дашборде нули | Проверьте ключ в `backend\.env` и логи бэкенда; при ошибке CRM API отдаёт 200 с нулями и текстом в `status` |
-| Данные не обновились | Кэш бэкенда — 5 минут; перезапустите бэкенд или подождите |
+| 401 при входе | Неверный логин/пароль или не заполнен `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD_HASH` |
+| 503 «Авторизация не настроена» | В `backend\.env` не заданы учётные данные — добавьте `DASHBOARD_USERNAME` и `DASHBOARD_PASSWORD_HASH` (или `DASHBOARD_PASSWORD`) |
+| Данные не обновились | Фоновое обновление раз в час; нажмите «Обновить» в дашборде или `docker compose restart backend` |
 | Кириллица в логах/файлах | Файлы проекта в UTF-8; для `.env` достаточно ASCII |
+
+### Docker Desktop не запускается или движок не поднимается
+
+Если ошибка про `dockerDesktopLinuxEngine` повторяется даже после запуска Docker Desktop:
+
+1. Выйдите из Docker Desktop (иконка кита в трее → **Quit Docker Desktop**) и запустите снова; дождитесь, пока в трее появится **Engine running**.
+2. Проверьте, что CLI видит сервер:
+   ```powershell
+   docker version
+   docker info
+   ```
+   В выводе `docker version` должен быть блок **Server**, а не только **Client**.
+3. Перезапустите WSL и обновите его:
+   ```powershell
+   wsl --shutdown
+   wsl --update
+   ```
+   Затем снова запустите Docker Desktop.
+4. Settings → **General** → включите **Use the WSL 2 based engine** (и интеграцию с вашим дистрибутивом в **Resources → WSL Integration**).
+5. Проверьте виртуализацию: Диспетчер задач → Производительность → **Виртуализация: Включена**. Если выключена — включите в BIOS/UEFI и компоненты Windows **Hyper-V** / **Virtual Machine Platform**.
+6. Убедитесь, что выбран правильный контекст:
+   ```powershell
+   docker context ls
+   docker context use desktop-linux
+   ```
+
+Если Docker так и не заводится — используйте вариант 2 (Python), он не требует Docker.
 
 ## Безопасность
 
