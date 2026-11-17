@@ -114,6 +114,8 @@ python -m uvicorn app.main:app --reload --port 8000
 
 - [`docs/Documentation.md`](docs/Documentation.md) — архитектура, конфигурация, эксплуатация.
 - [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) — описание API (Приложение Б к ТЗ).
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — развёртывание на сервере, HTTPS, бэкапы, ротация секретов.
+- [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) — методика расчёта и чек-лист приёмки.
 - [`docs/RUNNING_ON_WINDOWS.md`](docs/RUNNING_ON_WINDOWS.md) — запуск на Windows.
 - [`docs/TZ_RESEARCH_AND_PLAN.md`](docs/TZ_RESEARCH_AND_PLAN.md) — ресерч ТЗ и план улучшений.
 

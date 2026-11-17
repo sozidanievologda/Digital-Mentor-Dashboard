@@ -51,6 +51,7 @@
 - `PROJECT_TAG_PREFIX` — префикс тегов участников проекта (по умолчанию `ФПГ_ЦН`).
 - `PROJECT_TAG_NAMES` — точный список тегов через запятую (альтернатива префиксу).
 - `PROJECT_START_DATE` — начало проекта для оценочного бэкфилла истории (2025-02-01).
+- `CORS_ORIGINS` — список origin, которым разрешены запросы к API (по умолчанию локальные адреса и `null` для file://). В продакшене укажите только домен дашборда.
 - `MOYKLASS_AUTH_URL`, `MOYKLASS_USERS_URL`, `MOYKLASS_MANAGERS_URL` — адреса API.
 
 Структура бэкенда
@@ -148,7 +149,7 @@ API эндпоинты
 Фронтенд
 
 - `frontend/js/api_client.js` — axios-клиент, Bearer-токен, базовый URL (same-origin в Docker, `localhost:8000` для file://).
-- `frontend/js/main.js` — вход, метрики, график Chart.js, периоды и произвольный интервал, экспорт CSV, статус подключения, автообновление раз в 5 минут.
+- `frontend/js/main.js` — вход, метрики, график Chart.js, периоды (7/30/90 дней, квартал, всё время) и произвольный интервал, экспорт CSV, статус подключения, автообновление раз в 5 минут.
 - `frontend/css/style.css` — адаптивная вёрстка (ПК и планшет).
 
 Эксплуатация
@@ -157,3 +158,5 @@ API эндпоинты
 - Бэкап БД: том `dashboard-data` (или `backend/data/dashboard.db` при локальном запуске).
 - Сброс данных: `docker compose down -v` (удалит том) либо удалить файл БД.
 - Healthcheck контейнера бэкенда: `GET /` внутри контейнера.
+- Прод-развёртывание, HTTPS, бэкапы и ротация секретов: `docs/DEPLOYMENT.md`.
+- Сверка с CRM для приёмки: `cd backend && python scripts/verify_metrics.py --details` (`docs/ACCEPTANCE.md`).
