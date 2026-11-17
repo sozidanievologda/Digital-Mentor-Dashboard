@@ -1,4 +1,4 @@
-# Настройка и запуск дашборда на Windows.
+﻿# Настройка и запуск дашборда на Windows.
 #   powershell -ExecutionPolicy Bypass -File .\setup.ps1
 #   powershell -ExecutionPolicy Bypass -File .\setup.ps1 -NoStart
 #   powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Local
@@ -14,6 +14,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+# Windows PowerShell 5.1 reads scripts without a BOM as ANSI; this file is
+# stored as UTF-8 with BOM. Also switch the console to UTF-8 for Cyrillic.
+try {
+    & "$env:SystemRoot\System32\chcp.com" 65001 | Out-Null
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $OutputEncoding = [Console]::OutputEncoding
+} catch { }
 
 function Find-Python {
     foreach ($candidate in @("py", "python", "python3")) {
