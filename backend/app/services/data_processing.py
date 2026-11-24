@@ -9,7 +9,7 @@ from . import collector, storage
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_DAYS = 730
-PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "quarter": 90}
+PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "quarter": 90, "12m": 365}
 
 
 def _parse_day(value: str, field_name: str) -> date:
@@ -79,7 +79,7 @@ def _resolve_range(period: str, start: str, end: str):
             if days is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="period должен быть одним из: 7d, 30d, 90d, quarter, all",
+                    detail="period должен быть одним из: 7d, 30d, 90d, quarter, 12m, all",
                 )
             start_date = end_date - timedelta(days=days - 1)
 
@@ -120,7 +120,77 @@ def _build_series(start_date: date, end_date: date):
     return pensioners_series, volunteers_series, approximate
 
 
-def get_history_data(period: str = "30d", start: str = None, end: str = None):
+def _month_start(day: date) -> date:
+    return date(day.year, day.month, 1)
+
+
+def _next_month(day: date) -> date:
+    return date(day.year + (day.month == 12), day.month % 12 + 1, 1)
+
+
+def _shift_months(day: date, months: int) -> date:
+    total = day.year * 12 + (day.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _cumulative_at(rows, baseline, day: date):
+    pensioners = baseline["project_users"] if baseline else None
+    volunteers = baseline["volunteers"] if baseline else None
+    for row in rows:
+        if row["snapshot_date"] <= day.isoformat():
+            pensioners = row["project_users"]
+            volunteers = row["volunteers"]
+        else:
+            break
+    return pensioners, volunteers
+
+
+def _build_monthly_series(start_date: date, end_date: date):
+    """Monthly growth: how many new participants appeared in each month."""
+    aligned_start = _month_start(start_date)
+    rows = storage.get_snapshots(aligned_start.isoformat(), end_date.isoformat())
+    baseline = storage.get_snapshot_before(aligned_start.isoformat())
+    approximate = any(row["source"] == "backfill" for row in rows + ([baseline] if baseline else []))
+
+    previous_pensioners = baseline["project_users"] if baseline else None
+    previous_volunteers = baseline["volunteers"] if baseline else None
+    pensioners_series = []
+    volunteers_series = []
+
+    cursor = aligned_start
+    while cursor <= end_date:
+        month_end = min(_next_month(cursor) - timedelta(days=1), end_date)
+        pensioners, volunteers = _cumulative_at(rows, baseline, month_end)
+
+        pensioners_series.append({
+            "date": cursor.strftime("%Y-%m"),
+            "count": None if pensioners is None or previous_pensioners is None
+            else pensioners - previous_pensioners,
+        })
+        volunteers_series.append({
+            "date": cursor.strftime("%Y-%m"),
+            "count": None if volunteers is None or previous_volunteers is None
+            else volunteers - previous_volunteers,
+        })
+
+        previous_pensioners = pensioners
+        previous_volunteers = volunteers
+        cursor = _next_month(cursor)
+
+    return pensioners_series, volunteers_series, approximate
+
+
+def get_history_data(period: str = "30d", start: str = None, end: str = None, group: str = "day"):
+    if group not in ("day", "month"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group должен быть day или month",
+        )
+    if group == "month":
+        # Monthly columns are most useful over a long range.
+        if period in ("7d", "30d") and not start and not end:
+            period = "12m"
+
     collector.ensure_fresh()
 
     try:
@@ -134,12 +204,22 @@ def get_history_data(period: str = "30d", start: str = None, end: str = None):
             detail="Некорректные параметры периода",
         )
 
-    pensioners, volunteers, approximate = _build_series(start_date, end_date)
+    if group == "month" and period == "12m" and not start and not end:
+        # Exactly 12 monthly columns including the current month.
+        start_date = _shift_months(_month_start(end_date), -11)
+    elif group == "month":
+        start_date = _month_start(start_date)
+
+    if group == "month":
+        pensioners, volunteers, approximate = _build_monthly_series(start_date, end_date)
+    else:
+        pensioners, volunteers, approximate = _build_series(start_date, end_date)
 
     return {
         "period": period,
         "start": start_date.isoformat(),
         "end": end_date.isoformat(),
+        "group": group,
         "source": "snapshots",
         "approximate": approximate,
         "pensioners": pensioners,
