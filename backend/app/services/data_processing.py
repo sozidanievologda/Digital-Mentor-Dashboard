@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from datetime import date, timedelta
 
 from fastapi import HTTPException, status
@@ -31,7 +32,52 @@ def _parse_day(value: str, field_name: str) -> date:
         )
 
 
-def get_current_metrics():
+def list_project_tags():
+    return collector.project_tags()
+
+
+def _parse_tag_selection(raw):
+    """Return (tag_ids, all_selected, tags).
+
+    None means "all project tags"; an empty string means "nothing selected".
+    """
+    project = collector.project_tags()
+    by_id = {tag["id"]: tag for tag in project}
+
+    if raw is None:
+        return list(by_id), True, project
+    if not raw.strip():
+        return [], False, []
+
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    try:
+        ids = [int(part) for part in parts]
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tags должен содержать id тегов через запятую",
+        )
+
+    unknown = sorted(set(ids) - set(by_id))
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Неизвестные теги проекта: {unknown}",
+        )
+
+    unique_ids = list(dict.fromkeys(ids))
+    all_selected = set(unique_ids) == set(by_id)
+    return unique_ids, all_selected, [by_id[tag_id] for tag_id in unique_ids]
+
+
+def get_tags_data():
+    tags = collector.project_tags()
+    total = storage.count_users_for_tags([tag["id"] for tag in tags])
+    return {"tags": tags, "unique_users": total}
+
+
+def get_current_metrics(tags_raw=None):
+    tag_ids, all_selected, selected_tags = _parse_tag_selection(tags_raw)
     snapshot = storage.get_latest_snapshot()
     if snapshot is None:
         raise HTTPException(
@@ -45,9 +91,10 @@ def get_current_metrics():
 
     last_success_at = storage.get_meta("last_success_at")
     last_error = storage.get_meta("last_error") or None
+    pensioners_count = storage.count_users_for_tags(tag_ids) if tag_ids else 0
 
     return {
-        "pensioners_count": snapshot["project_users"],
+        "pensioners_count": pensioners_count,
         "volunteers_count": snapshot["volunteers"],
         "total_users": snapshot["total_users"],
         "last_updated": snapshot["taken_at"],
@@ -55,15 +102,18 @@ def get_current_metrics():
         "status": "active" if data_status == "live" else "stale",
         "data_status": data_status,
         "error": last_error,
+        "selected_tag_ids": tag_ids,
+        "selected_tags": [tag["name"] for tag in selected_tags],
+        "all_tags_selected": all_selected,
     }
 
 
-def refresh_and_get_metrics():
+def refresh_and_get_metrics(tags_raw=None):
     try:
         collector.refresh_data(blocking=True)
     except Exception as exc:
         logger.warning(f"Ручное обновление не удалось: {exc}")
-    return get_current_metrics()
+    return get_current_metrics(tags_raw=tags_raw)
 
 
 def _resolve_range(period: str, start: str, end: str):
@@ -192,13 +242,54 @@ def _build_monthly_series(start_date: date, end_date: date):
     return pensioners_series, volunteers_series, approximate
 
 
-def get_history_data(period: str = "30d", start: str = None, end: str = None, group: str = "day"):
+def _parse_created_days(values):
+    days = []
+    for value in values:
+        try:
+            days.append(date.fromisoformat(str(value)[:10]))
+        except (ValueError, TypeError):
+            continue
+    return days
+
+
+def _build_dates_cumulative(created, start_date: date, end_date: date):
+    days = _parse_created_days(created)
+    per_day = Counter(day.isoformat() for day in days)
+    current = sum(1 for day in days if day < start_date)
+
+    series = []
+    cursor = start_date
+    while cursor <= end_date:
+        current += per_day.get(cursor.isoformat(), 0)
+        series.append({"date": cursor.isoformat(), "count": current})
+        cursor += timedelta(days=1)
+    return series
+
+
+def _build_dates_monthly(created, start_date: date, end_date: date):
+    days = _parse_created_days(created)
+    previous = sum(1 for day in days if day < start_date)
+
+    series = []
+    cursor = _month_start(start_date)
+    while cursor <= end_date:
+        month_end = min(_next_month(cursor) - timedelta(days=1), end_date)
+        value = sum(1 for day in days if day <= month_end)
+        series.append({"date": cursor.strftime("%Y-%m"), "count": value - previous})
+        previous = value
+        cursor = _next_month(cursor)
+    return series
+
+
+def get_history_data(period: str = "30d", start: str = None, end: str = None,
+                     group: str = "day", tags_raw=None):
     if group not in ("day", "month"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="group должен быть day или month",
         )
 
+    tag_ids, all_selected, selected_tags = _parse_tag_selection(tags_raw)
     collector.ensure_fresh()
 
     try:
@@ -219,18 +310,35 @@ def get_history_data(period: str = "30d", start: str = None, end: str = None, gr
         if period.endswith("m") and period_months.isdigit():
             start_date = _shift_months(_month_start(end_date), -(int(period_months) - 1))
 
-    if group == "month":
-        pensioners, volunteers, approximate = _build_monthly_series(start_date, end_date)
+    source = "snapshots"
+    if all_selected:
+        if group == "month":
+            pensioners, volunteers, approximate = _build_monthly_series(start_date, end_date)
+        else:
+            pensioners, volunteers, approximate = _build_series(start_date, end_date)
     else:
-        pensioners, volunteers, approximate = _build_series(start_date, end_date)
+        # Tag subsets have no historical snapshots: approximate the series
+        # from the users' CRM creation dates.
+        created = storage.get_created_dates_for_tags(tag_ids)
+        approximate = True
+        source = "tags"
+        if group == "month":
+            pensioners = _build_dates_monthly(created, start_date, end_date)
+            _, volunteers, _ = _build_monthly_series(start_date, end_date)
+        else:
+            pensioners = _build_dates_cumulative(created, start_date, end_date)
+            _, volunteers, _ = _build_series(start_date, end_date)
 
     return {
         "period": period,
         "start": start_date.isoformat(),
         "end": end_date.isoformat(),
         "group": group,
-        "source": "snapshots",
+        "source": source,
         "approximate": approximate,
         "pensioners": pensioners,
         "volunteers": volunteers,
+        "selected_tag_ids": tag_ids,
+        "all_tags_selected": all_selected,
+        "selected_tags": [tag["name"] for tag in selected_tags],
     }

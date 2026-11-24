@@ -239,6 +239,46 @@ def min_snapshot_date():
     return row["day"] if row and row["day"] else None
 
 
+def get_tags_with_counts():
+    init_db()
+    with _transaction() as connection:
+        rows = connection.execute(
+            "SELECT t.id, t.name, COUNT(DISTINCT ut.user_id) AS users "
+            "FROM tags t LEFT JOIN user_tags ut ON ut.tag_id = t.id "
+            "GROUP BY t.id, t.name ORDER BY t.name"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_users_for_tags(tag_ids):
+    if not tag_ids:
+        return 0
+    placeholders = ",".join("?" for _ in tag_ids)
+    init_db()
+    with _transaction() as connection:
+        row = connection.execute(
+            f"SELECT COUNT(DISTINCT user_id) AS total FROM user_tags "
+            f"WHERE tag_id IN ({placeholders})",
+            list(tag_ids),
+        ).fetchone()
+    return row["total"] if row else 0
+
+
+def get_created_dates_for_tags(tag_ids):
+    if not tag_ids:
+        return []
+    placeholders = ",".join("?" for _ in tag_ids)
+    init_db()
+    with _transaction() as connection:
+        rows = connection.execute(
+            f"SELECT DISTINCT u.created_at FROM users u "
+            f"JOIN user_tags ut ON ut.user_id = u.id "
+            f"WHERE ut.tag_id IN ({placeholders}) AND u.created_at IS NOT NULL",
+            list(tag_ids),
+        ).fetchall()
+    return [row["created_at"] for row in rows]
+
+
 def get_all_user_created_dates():
     init_db()
     with _transaction() as connection:

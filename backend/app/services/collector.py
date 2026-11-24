@@ -16,10 +16,16 @@ _stop_event = threading.Event()
 _scheduler_thread = None
 
 
-def _tag_matches(name: str) -> bool:
+def tag_matches(name: str) -> bool:
     if config.PROJECT_TAG_NAMES:
         return name in config.PROJECT_TAG_NAMES
     return name.startswith(config.PROJECT_TAG_PREFIX)
+
+
+def project_tags():
+    """Project tags known from the last CRM sync, with participant counts."""
+    tags = [tag for tag in storage.get_tags_with_counts() if tag_matches(tag["name"])]
+    return sorted(tags, key=lambda tag: (-tag["users"], tag["name"]))
 
 
 def project_user_ids(users):
@@ -30,7 +36,7 @@ def project_user_ids(users):
         if user_id is None:
             continue
         if any(
-            isinstance(tag, dict) and _tag_matches(tag.get("name", ""))
+            isinstance(tag, dict) and tag_matches(tag.get("name", ""))
             for tag in (user.get("tags") or [])
         ):
             ids.add(user_id)

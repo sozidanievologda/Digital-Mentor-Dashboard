@@ -31,7 +31,7 @@ def count_tags(users):
             if not isinstance(tag, dict):
                 continue
             name = tag.get("name", "")
-            if name in seen or not collector._tag_matches(name):
+            if name in seen or not collector.tag_matches(name):
                 continue
             seen.add(name)
             counts[name] += 1
