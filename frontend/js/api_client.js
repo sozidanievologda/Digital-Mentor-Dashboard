@@ -59,13 +59,26 @@ async function fetchMe() {
     return data;
 }
 
-async function fetchMetrics() {
-    const { data } = await api.get("/dashboard/metrics");
+async function fetchTags() {
+    const { data } = await api.get("/dashboard/tags");
     return data;
 }
 
-async function fetchHistory(period = "30d", range = null, group = "day") {
-    const params = { period, group };
+function tagParams(tagIds) {
+    const params = {};
+    if (tagIds !== null && tagIds !== undefined) {
+        params.tags = tagIds.join(",");
+    }
+    return params;
+}
+
+async function fetchMetrics(tagIds = null) {
+    const { data } = await api.get("/dashboard/metrics", { params: tagParams(tagIds) });
+    return data;
+}
+
+async function fetchHistory(period = "30d", range = null, group = "day", tagIds = null) {
+    const params = { period, group, ...tagParams(tagIds) };
     if (range && range.start && range.end) {
         params.period = "custom";
         params.start = range.start;
@@ -75,7 +88,7 @@ async function fetchHistory(period = "30d", range = null, group = "day") {
     return data;
 }
 
-async function refreshData() {
-    const { data } = await api.post("/dashboard/refresh");
+async function refreshData(tagIds = null) {
+    const { data } = await api.post("/dashboard/refresh", null, { params: tagParams(tagIds) });
     return data;
 }

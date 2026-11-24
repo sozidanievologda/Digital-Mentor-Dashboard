@@ -38,8 +38,23 @@
         <section class="card hero">
             <h2>Количество пенсионеров, получивших помощь</h2>
             <div id="pensioners-count" class="metric">—</div>
-            <p class="muted">Уникальные участники проекта — пользователи CRM с тегами «ФПГ_ЦН»</p>
+            <p id="metric-hint" class="muted">Уникальные участники проекта — пользователи CRM с тегами «ФПГ_ЦН»</p>
             <button id="refresh-btn" class="primary">Обновить</button>
+        </section>
+
+        <section class="card">
+            <div class="card-head">
+                <h2>Теги проекта</h2>
+                <div class="tag-actions">
+                    <button id="tags-all" class="secondary small">Выбрать все</button>
+                    <button id="tags-none" class="secondary small">Снять все</button>
+                </div>
+            </div>
+            <p class="muted">Считаются уникальные участники, у которых есть любой из выбранных тегов.</p>
+            <div id="tag-list" class="tag-list">
+                <span class="muted">Загрузка тегов...</span>
+            </div>
+            <p id="tag-summary" class="muted"></p>
         </section>
 
         <section class="card">

@@ -3,6 +3,9 @@ let currentHistory = null;
 let currentPeriod = "30d";
 let currentRange = null;
 let currentMode = "cumulative";
+let allTags = [];
+let selectedTagIds = null;
+let tagReloadTimer = null;
 let autoRefreshTimer = null;
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
@@ -22,6 +25,7 @@ async function boot() {
     try {
         const me = await fetchMe();
         showDashboard(me.username);
+        await loadTags();
         await loadAll();
     } catch (error) {
         showLogin();
@@ -34,6 +38,8 @@ function bindEvents() {
     document.getElementById("refresh-btn").addEventListener("click", onRefresh);
     document.getElementById("export-btn").addEventListener("click", exportCsv);
     document.getElementById("apply-range").addEventListener("click", onApplyRange);
+    document.getElementById("tags-all").addEventListener("click", onSelectAllTags);
+    document.getElementById("tags-none").addEventListener("click", onClearTags);
 
     document.querySelectorAll(".period-selector button").forEach((button) => {
         button.addEventListener("click", () => {
@@ -105,6 +111,7 @@ async function onLogin(event) {
         await login(username, password);
         const me = await fetchMe();
         showDashboard(me.username);
+        await loadTags();
         await loadAll();
     } catch (error) {
         errorBox.textContent = apiErrorMessage(error, "Не удалось войти");
@@ -124,10 +131,153 @@ async function onLogout() {
     showLogin();
 }
 
+function readStoredTags() {
+    try {
+        const raw = localStorage.getItem("dm_tags");
+        if (raw === null) return null;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map(Number) : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function persistTags() {
+    if (selectedTagIds !== null) {
+        localStorage.setItem("dm_tags", JSON.stringify([...selectedTagIds]));
+    }
+}
+
+function currentTagIds() {
+    return selectedTagIds === null ? null : [...selectedTagIds];
+}
+
+async function loadTags() {
+    const container = document.getElementById("tag-list");
+    try {
+        const data = await fetchTags();
+        allTags = data.tags || [];
+        const stored = readStoredTags();
+        const allIds = allTags.map((tag) => tag.id);
+
+        if (stored === null) {
+            selectedTagIds = new Set(allIds);
+        } else {
+            const valid = stored.filter((id) => allIds.includes(id));
+            // If saved ids no longer exist, fall back to all tags; an empty
+            // saved list is a deliberate "nothing selected" state.
+            selectedTagIds = new Set(
+                valid.length > 0 || stored.length === 0 ? valid : allIds
+            );
+        }
+
+        renderTags();
+        updateTagSummary();
+    } catch (error) {
+        allTags = [];
+        selectedTagIds = null;
+        container.textContent = "Не удалось загрузить теги — показаны все участники проекта.";
+        updateTagSummary();
+    }
+}
+
+function renderTags() {
+    const container = document.getElementById("tag-list");
+    container.replaceChildren();
+
+    if (!selectedTagIds || allTags.length === 0) {
+        const empty = document.createElement("span");
+        empty.className = "muted";
+        empty.textContent = "Теги не найдены";
+        container.appendChild(empty);
+        return;
+    }
+
+    allTags.forEach((tag) => {
+        const label = document.createElement("label");
+        label.className = "tag-item";
+
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = selectedTagIds.has(tag.id);
+        input.addEventListener("change", () => onTagToggle(tag.id, input.checked));
+
+        const name = document.createElement("span");
+        name.textContent = tag.name;
+
+        const count = document.createElement("span");
+        count.className = "tag-count";
+        count.textContent = formatNumber(tag.users);
+
+        label.append(input, name, count);
+        container.appendChild(label);
+    });
+}
+
+function updateTagSummary() {
+    const summary = document.getElementById("tag-summary");
+    const hint = document.getElementById("metric-hint");
+
+    if (selectedTagIds === null) {
+        summary.textContent = "Теги недоступны — показаны все участники проекта.";
+        return;
+    }
+
+    const total = allTags.length;
+    const selected = selectedTagIds.size;
+
+    if (selected === 0) {
+        summary.textContent = "Теги не выбраны — показаны нулевые значения.";
+        hint.textContent = "Теги не выбраны";
+    } else if (selected === total) {
+        summary.textContent = `Выбраны все теги (${total}).`;
+        hint.textContent = "Уникальные участники проекта — пользователи CRM с тегами «ФПГ_ЦН»";
+    } else {
+        summary.textContent = `Выбрано ${selected} из ${total} тегов.`;
+        hint.textContent = `Уникальные участники по выбранным тегам (${selected} из ${total})`;
+    }
+}
+
+function onTagToggle(tagId, checked) {
+    if (selectedTagIds === null) return;
+    if (checked) {
+        selectedTagIds.add(tagId);
+    } else {
+        selectedTagIds.delete(tagId);
+    }
+    persistTags();
+    updateTagSummary();
+    scheduleTagReload();
+}
+
+function scheduleTagReload() {
+    clearTimeout(tagReloadTimer);
+    tagReloadTimer = setTimeout(() => loadAll(), 350);
+}
+
+function onSelectAllTags() {
+    if (selectedTagIds === null) return;
+    selectedTagIds = new Set(allTags.map((tag) => tag.id));
+    persistTags();
+    renderTags();
+    updateTagSummary();
+    loadAll();
+}
+
+function onClearTags() {
+    if (selectedTagIds === null) return;
+    selectedTagIds = new Set();
+    persistTags();
+    renderTags();
+    updateTagSummary();
+    loadAll();
+}
+
 async function loadAll() {
+    const tagIds = currentTagIds();
     const [metricsResult, historyResult] = await Promise.allSettled([
-        fetchMetrics(),
-        fetchHistory(currentPeriod, currentRange, historyGroup()),
+        fetchMetrics(tagIds),
+        fetchHistory(currentPeriod, currentRange, historyGroup(), tagIds),
     ]);
 
     if (metricsResult.status === "fulfilled") {
@@ -227,7 +377,9 @@ function switchMode(mode) {
 
 async function loadHistory() {
     try {
-        const history = await fetchHistory(currentPeriod, currentRange, historyGroup());
+        const history = await fetchHistory(
+            currentPeriod, currentRange, historyGroup(), currentTagIds()
+        );
         renderHistory(history);
     } catch (error) {
         renderHistoryError(error);
@@ -255,7 +407,12 @@ function renderHistory(history) {
     const isMonthly = history.group === "month";
     const points = history.pensioners || [];
     const note = document.getElementById("chart-note");
-    if (history.approximate) {
+    if (history.source === "tags") {
+        note.textContent = isMonthly
+            ? "Столбцы показывают новых участников по выбранным тегам. История рассчитана по датам создания карточек в CRM и является оценкой."
+            : "История по выбранным тегам рассчитана по датам создания карточек в CRM и является оценкой.";
+        note.hidden = false;
+    } else if (history.approximate) {
         note.textContent = isMonthly
             ? "Столбцы показывают новых участников за месяц. История до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой."
             : "Часть истории до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой.";
@@ -345,7 +502,7 @@ async function onRefresh() {
     button.textContent = "Обновление...";
 
     try {
-        const metrics = await refreshData();
+        const metrics = await refreshData(currentTagIds());
         renderMetrics(metrics);
         await loadHistory();
     } catch (error) {
