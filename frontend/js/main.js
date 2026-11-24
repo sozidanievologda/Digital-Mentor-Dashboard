@@ -50,15 +50,6 @@ function bindEvents() {
             document.querySelectorAll(".mode-selector button").forEach((item) => {
                 item.classList.toggle("active", item === button);
             });
-
-            // Short ranges produce a single bar; switch to a useful default.
-            if (currentMode === "monthly" && !currentRange
-                && (currentPeriod === "7d" || currentPeriod === "30d")) {
-                currentPeriod = "12m";
-                setActivePeriod(
-                    document.querySelector('.period-selector button[data-period="12m"]')
-                );
-            }
             loadHistory();
         });
     });
@@ -235,8 +226,12 @@ function renderHistory(history) {
     errorBox.hidden = true;
 
     const isMonthly = history.group === "month";
+    const points = history.pensioners || [];
     const note = document.getElementById("chart-note");
-    if (history.approximate) {
+    if (isMonthly && points.length < 2) {
+        note.textContent = "Для динамики по месяцам выберите период «12 месяцев», «За всё время» или более длинный интервал.";
+        note.hidden = false;
+    } else if (history.approximate) {
         note.textContent = isMonthly
             ? "Столбцы показывают новых участников за месяц. История до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой."
             : "Часть истории до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой.";
@@ -245,7 +240,6 @@ function renderHistory(history) {
         note.hidden = true;
     }
 
-    const points = history.pensioners || [];
     const labels = isMonthly
         ? points.map((point) => formatMonthLabel(point.date))
         : points.map((point) => point.date);

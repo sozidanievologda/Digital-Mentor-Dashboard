@@ -146,10 +146,13 @@ def _cumulative_at(rows, baseline, day: date):
 
 
 def _build_monthly_series(start_date: date, end_date: date):
-    """Monthly growth: how many new participants appeared in each month."""
-    aligned_start = _month_start(start_date)
-    rows = storage.get_snapshots(aligned_start.isoformat(), end_date.isoformat())
-    baseline = storage.get_snapshot_before(aligned_start.isoformat())
+    """Monthly growth: how many new participants appeared in each month.
+
+    Buckets follow the requested range: the first and last month may be
+    partial if the range does not start/end on a month boundary.
+    """
+    rows = storage.get_snapshots(start_date.isoformat(), end_date.isoformat())
+    baseline = storage.get_snapshot_before(start_date.isoformat())
     approximate = any(row["source"] == "backfill" for row in rows + ([baseline] if baseline else []))
 
     previous_pensioners = baseline["project_users"] if baseline else None
@@ -157,7 +160,7 @@ def _build_monthly_series(start_date: date, end_date: date):
     pensioners_series = []
     volunteers_series = []
 
-    cursor = aligned_start
+    cursor = _month_start(start_date)
     while cursor <= end_date:
         month_end = min(_next_month(cursor) - timedelta(days=1), end_date)
         pensioners, volunteers = _cumulative_at(rows, baseline, month_end)
@@ -186,10 +189,6 @@ def get_history_data(period: str = "30d", start: str = None, end: str = None, gr
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="group должен быть day или month",
         )
-    if group == "month":
-        # Monthly columns are most useful over a long range.
-        if period in ("7d", "30d") and not start and not end:
-            period = "12m"
 
     collector.ensure_fresh()
 
@@ -207,8 +206,6 @@ def get_history_data(period: str = "30d", start: str = None, end: str = None, gr
     if group == "month" and period == "12m" and not start and not end:
         # Exactly 12 monthly columns including the current month.
         start_date = _shift_months(_month_start(end_date), -11)
-    elif group == "month":
-        start_date = _month_start(start_date)
 
     if group == "month":
         pensioners, volunteers, approximate = _build_monthly_series(start_date, end_date)

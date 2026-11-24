@@ -72,7 +72,7 @@ def test_monthly_series_counts_new_participants():
     assert approximate is False
 
 
-def test_monthly_series_aligns_to_month_start():
+def test_monthly_series_counts_partial_first_month():
     from app.services.data_processing import _build_monthly_series
 
     storage.upsert_snapshot("2026-01-31", "2026-01-31T00:00:00", 10, 22, 2, source="live")
@@ -83,3 +83,18 @@ def test_monthly_series_aligns_to_month_start():
 
     assert [point["date"] for point in pensioners] == ["2026-02", "2026-03"]
     assert [point["count"] for point in pensioners] == [5, 3]
+
+
+def test_monthly_series_respects_exact_range_start():
+    from app.services.data_processing import _build_monthly_series
+
+    storage.upsert_snapshot("2026-01-01", "2026-01-01T00:00:00", 5, 20, 1, source="live")
+    storage.upsert_snapshot("2026-01-10", "2026-01-10T00:00:00", 8, 20, 1, source="live")
+    storage.upsert_snapshot("2026-01-31", "2026-01-31T00:00:00", 10, 22, 2, source="live")
+    storage.upsert_snapshot("2026-02-28", "2026-02-28T00:00:00", 15, 25, 3, source="live")
+
+    pensioners, _, _ = _build_monthly_series(date(2026, 1, 15), date(2026, 2, 10))
+
+    # Baseline is the snapshot before Jan 15 (8), so Jan counts only 2 new users.
+    assert [point["date"] for point in pensioners] == ["2026-01", "2026-02"]
+    assert [point["count"] for point in pensioners] == [2, 0]
