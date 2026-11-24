@@ -2,6 +2,7 @@ let historyChart = null;
 let currentHistory = null;
 let currentPeriod = "30d";
 let currentRange = null;
+let currentMode = "cumulative";
 let autoRefreshTimer = null;
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
@@ -39,6 +40,25 @@ function bindEvents() {
             document.getElementById("range-start").value = "";
             document.getElementById("range-end").value = "";
             setActivePeriod(button);
+            loadHistory();
+        });
+    });
+
+    document.querySelectorAll(".mode-selector button").forEach((button) => {
+        button.addEventListener("click", () => {
+            currentMode = button.dataset.mode;
+            document.querySelectorAll(".mode-selector button").forEach((item) => {
+                item.classList.toggle("active", item === button);
+            });
+
+            // Short ranges produce a single bar; switch to a useful default.
+            if (currentMode === "monthly" && !currentRange
+                && (currentPeriod === "7d" || currentPeriod === "30d")) {
+                currentPeriod = "12m";
+                setActivePeriod(
+                    document.querySelector('.period-selector button[data-period="12m"]')
+                );
+            }
             loadHistory();
         });
     });
@@ -118,7 +138,7 @@ async function onLogout() {
 async function loadAll() {
     const [metricsResult, historyResult] = await Promise.allSettled([
         fetchMetrics(),
-        fetchHistory(currentPeriod, currentRange),
+        fetchHistory(currentPeriod, currentRange, historyGroup()),
     ]);
 
     if (metricsResult.status === "fulfilled") {
@@ -189,11 +209,24 @@ function setActivePeriod(activeButton) {
 
 async function loadHistory() {
     try {
-        const history = await fetchHistory(currentPeriod, currentRange);
+        const history = await fetchHistory(currentPeriod, currentRange, historyGroup());
         renderHistory(history);
     } catch (error) {
         renderHistoryError(error);
     }
+}
+
+function historyGroup() {
+    return currentMode === "monthly" ? "month" : "day";
+}
+
+function formatMonthLabel(value) {
+    const [year, month] = value.split("-").map(Number);
+    if (!year || !month) return value;
+    return new Date(year, month - 1, 1).toLocaleDateString("ru-RU", {
+        month: "short",
+        year: "numeric",
+    });
 }
 
 function renderHistory(history) {
@@ -201,16 +234,21 @@ function renderHistory(history) {
     const errorBox = document.getElementById("chart-error");
     errorBox.hidden = true;
 
+    const isMonthly = history.group === "month";
     const note = document.getElementById("chart-note");
     if (history.approximate) {
-        note.textContent = "Часть истории до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой.";
+        note.textContent = isMonthly
+            ? "Столбцы показывают новых участников за месяц. История до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой."
+            : "Часть истории до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой.";
         note.hidden = false;
     } else {
         note.hidden = true;
     }
 
     const points = history.pensioners || [];
-    const labels = points.map((point) => point.date);
+    const labels = isMonthly
+        ? points.map((point) => formatMonthLabel(point.date))
+        : points.map((point) => point.date);
     const values = points.map((point) => point.count);
 
     const canvas = document.getElementById("history-chart");
@@ -221,22 +259,32 @@ function renderHistory(history) {
         historyChart = null;
     }
 
+    const dataset = isMonthly
+        ? {
+            label: "Пришло за месяц",
+            data: values,
+            backgroundColor: "rgba(75, 132, 192, 0.65)",
+            borderColor: "rgb(75, 132, 192)",
+            borderWidth: 1,
+            borderRadius: 4,
+            maxBarThickness: 56,
+        }
+        : {
+            label: "Пенсионеры",
+            data: values,
+            borderColor: "rgb(75, 132, 192)",
+            backgroundColor: "rgba(75, 132, 192, 0.15)",
+            fill: true,
+            tension: 0.2,
+            pointRadius: 2,
+            spanGaps: true,
+        };
+
     historyChart = new Chart(context, {
-        type: "line",
+        type: isMonthly ? "bar" : "line",
         data: {
             labels,
-            datasets: [
-                {
-                    label: "Пенсионеры",
-                    data: values,
-                    borderColor: "rgb(75, 132, 192)",
-                    backgroundColor: "rgba(75, 132, 192, 0.15)",
-                    fill: true,
-                    tension: 0.2,
-                    pointRadius: 2,
-                    spanGaps: true,
-                },
-            ],
+            datasets: [dataset],
         },
         options: {
             responsive: true,
@@ -246,18 +294,18 @@ function renderHistory(history) {
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
-                        label: (item) => `Пенсионеры: ${formatNumber(item.parsed.y)}`,
+                        label: (item) => `${isMonthly ? "Пришло" : "Пенсионеры"}: ${formatNumber(item.parsed.y)}`,
                     },
                 },
             },
             scales: {
                 x: {
-                    title: { display: true, text: "Дата" },
-                    ticks: { maxTicksLimit: 12 },
+                    title: { display: true, text: isMonthly ? "Месяц" : "Дата" },
+                    ticks: { maxTicksLimit: 12, maxRotation: 0, autoSkip: true },
                 },
                 y: {
                     beginAtZero: true,
-                    title: { display: true, text: "Количество" },
+                    title: { display: true, text: isMonthly ? "Человек за месяц" : "Количество" },
                     ticks: {
                         callback: (value) => Number(value).toLocaleString("ru-RU"),
                     },
@@ -323,7 +371,12 @@ function exportCsv() {
     }
 
     const volunteers = currentHistory.volunteers || [];
-    const rows = [["date", "pensioners", "volunteers"]];
+    const isMonthly = currentHistory.group === "month";
+    const rows = [
+        isMonthly
+            ? ["month", "new_participants", "volunteers"]
+            : ["date", "pensioners", "volunteers"],
+    ];
     currentHistory.pensioners.forEach((point, index) => {
         rows.push([
             point.date,
@@ -337,7 +390,7 @@ function exportCsv() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `digital-mentor-${currentHistory.start}_${currentHistory.end}.csv`;
+    link.download = `digital-mentor-${isMonthly ? "monthly-" : ""}${currentHistory.start}_${currentHistory.end}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

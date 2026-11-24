@@ -96,15 +96,22 @@ body {
     gap: 16px;
     flex-wrap: wrap;
     margin: 8px 0 16px;
-}
-
-.period-selector {
+}.period-selector {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
 }
 
-.period-selector button {
+.mode-selector {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-right: 12px;
+    border-right: 1px solid var(--border);
+}
+
+.period-selector button,
+.mode-selector button {
     background: #fff;
     color: var(--blue);
     border: 1px solid var(--border);
@@ -113,7 +120,9 @@ body {
 }
 
 .period-selector button.active,
-.period-selector button:hover {
+.period-selector button:hover,
+.mode-selector button.active,
+.mode-selector button:hover {
     background: var(--blue);
     color: #fff;
     border-color: var(--blue);

@@ -49,11 +49,16 @@
             </div>
 
             <div class="controls">
+                <div class="mode-selector" role="group" aria-label="Тип графика">
+                    <button data-mode="cumulative" class="active">Накопительно</button>
+                    <button data-mode="monthly">По месяцам</button>
+                </div>
                 <div class="period-selector" role="group" aria-label="Период">
                     <button data-period="7d">7 дней</button>
                     <button data-period="30d" class="active">30 дней</button>
                     <button data-period="90d">90 дней</button>
                     <button data-period="quarter">Квартал</button>
+                    <button data-period="12m">12 месяцев</button>
                     <button data-period="all">За всё время</button>
                 </div>
                 <div class="custom-range">

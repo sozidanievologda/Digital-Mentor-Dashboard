@@ -64,8 +64,8 @@ async function fetchMetrics() {
     return data;
 }
 
-async function fetchHistory(period = "30d", range = null) {
-    const params = { period };
+async function fetchHistory(period = "30d", range = null, group = "day") {
+    const params = { period, group };
     if (range && range.start && range.end) {
         params.period = "custom";
         params.start = range.start;
