@@ -53,11 +53,18 @@
                     <button data-mode="cumulative" class="active">Накопительно</button>
                     <button data-mode="monthly">По месяцам</button>
                 </div>
-                <div class="period-selector" role="group" aria-label="Период">
+                <div class="period-selector" id="period-daily" role="group" aria-label="Период">
                     <button data-period="7d">7 дней</button>
                     <button data-period="30d" class="active">30 дней</button>
                     <button data-period="90d">90 дней</button>
                     <button data-period="quarter">Квартал</button>
+                    <button data-period="12m">12 месяцев</button>
+                    <button data-period="all">За всё время</button>
+                </div>
+                <div class="period-selector" id="period-monthly" role="group" aria-label="Период" hidden>
+                    <button data-period="1m">1 месяц</button>
+                    <button data-period="3m" class="active">3 месяца</button>
+                    <button data-period="6m">6 месяцев</button>
                     <button data-period="12m">12 месяцев</button>
                     <button data-period="all">За всё время</button>
                 </div>

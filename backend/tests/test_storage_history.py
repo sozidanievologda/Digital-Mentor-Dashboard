@@ -72,6 +72,14 @@ def test_monthly_series_counts_new_participants():
     assert approximate is False
 
 
+def test_shift_months():
+    from app.services.data_processing import _shift_months
+
+    assert _shift_months(date(2026, 11, 1), -2) == date(2026, 9, 1)
+    assert _shift_months(date(2026, 1, 1), -1) == date(2025, 12, 1)
+    assert _shift_months(date(2026, 12, 1), 1) == date(2027, 1, 1)
+
+
 def test_monthly_series_counts_partial_first_month():
     from app.services.data_processing import _build_monthly_series
 

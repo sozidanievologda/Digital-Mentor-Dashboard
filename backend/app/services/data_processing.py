@@ -9,7 +9,16 @@ from . import collector, storage
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_DAYS = 730
-PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "quarter": 90, "12m": 365}
+PERIOD_DAYS = {
+    "7d": 7,
+    "30d": 30,
+    "90d": 90,
+    "quarter": 90,
+    "1m": 30,
+    "3m": 90,
+    "6m": 180,
+    "12m": 365,
+}
 
 
 def _parse_day(value: str, field_name: str) -> date:
@@ -79,7 +88,7 @@ def _resolve_range(period: str, start: str, end: str):
             if days is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="period должен быть одним из: 7d, 30d, 90d, quarter, 12m, all",
+                    detail="period должен быть одним из: 7d, 30d, 90d, quarter, 1m, 3m, 6m, 12m, all",
                 )
             start_date = end_date - timedelta(days=days - 1)
 
@@ -203,9 +212,12 @@ def get_history_data(period: str = "30d", start: str = None, end: str = None, gr
             detail="Некорректные параметры периода",
         )
 
-    if group == "month" and period == "12m" and not start and not end:
-        # Exactly 12 monthly columns including the current month.
-        start_date = _shift_months(_month_start(end_date), -11)
+    if group == "month" and not start and not end:
+        # Calendar-month periods (1m, 3m, 6m, 12m) start on the first day of
+        # the month so the columns are whole months.
+        period_months = period[:-1]
+        if period.endswith("m") and period_months.isdigit():
+            start_date = _shift_months(_month_start(end_date), -(int(period_months) - 1))
 
     if group == "month":
         pensioners, volunteers, approximate = _build_monthly_series(start_date, end_date)

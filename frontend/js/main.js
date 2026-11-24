@@ -6,6 +6,8 @@ let currentMode = "cumulative";
 let autoRefreshTimer = null;
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const CUMULATIVE_PERIODS = new Set(["7d", "30d", "90d", "quarter", "12m", "all"]);
+const MONTHLY_PERIODS = new Set(["1m", "3m", "6m", "12m", "all"]);
 
 document.addEventListener("DOMContentLoaded", () => {
     bindEvents();
@@ -46,11 +48,7 @@ function bindEvents() {
 
     document.querySelectorAll(".mode-selector button").forEach((button) => {
         button.addEventListener("click", () => {
-            currentMode = button.dataset.mode;
-            document.querySelectorAll(".mode-selector button").forEach((item) => {
-                item.classList.toggle("active", item === button);
-            });
-            loadHistory();
+            switchMode(button.dataset.mode);
         });
     });
 
@@ -198,6 +196,35 @@ function setActivePeriod(activeButton) {
     });
 }
 
+function activatePeriod(period) {
+    const selector = document.getElementById(
+        currentMode === "monthly" ? "period-monthly" : "period-daily"
+    );
+    selector.querySelectorAll("button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.period === period);
+    });
+}
+
+function switchMode(mode) {
+    currentMode = mode;
+    const monthly = mode === "monthly";
+
+    document.querySelectorAll(".mode-selector button").forEach((item) => {
+        item.classList.toggle("active", item.dataset.mode === mode);
+    });
+    document.getElementById("period-daily").hidden = monthly;
+    document.getElementById("period-monthly").hidden = !monthly;
+
+    if (!currentRange) {
+        const allowed = monthly ? MONTHLY_PERIODS : CUMULATIVE_PERIODS;
+        if (!allowed.has(currentPeriod)) {
+            currentPeriod = monthly ? "3m" : "30d";
+        }
+        activatePeriod(currentPeriod);
+    }
+    loadHistory();
+}
+
 async function loadHistory() {
     try {
         const history = await fetchHistory(currentPeriod, currentRange, historyGroup());
@@ -228,10 +255,7 @@ function renderHistory(history) {
     const isMonthly = history.group === "month";
     const points = history.pensioners || [];
     const note = document.getElementById("chart-note");
-    if (isMonthly && points.length < 2) {
-        note.textContent = "Для динамики по месяцам выберите период «12 месяцев», «За всё время» или более длинный интервал.";
-        note.hidden = false;
-    } else if (history.approximate) {
+    if (history.approximate) {
         note.textContent = isMonthly
             ? "Столбцы показывают новых участников за месяц. История до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой."
             : "Часть истории до первого сбора данных рассчитана по датам создания карточек в CRM и является оценкой.";
